@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chatly</title>
+  <link rel="stylesheet" href="style.css?v=3" />
+  <meta name="referrer" content="no-referrer" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">💬</div>
+        <div class="brandText">
+          <div class="brandName">Chatly</div>
+          <div class="brandSub" id="conn">offline</div>
+        </div>
+      </div>
+
+      <div class="meBar" id="meBar" style="display:none;">
+        <div class="meMini">
+          <span class="meLabel">Angemeldet als</span>
+          <span class="meValue" id="meName">-</span>
+          <span class="dot">•</span>
+          <span class="meValue" id="meRole">-</span>
+        </div>
+        <button class="btn" id="btnAdminPanel" type="button" style="display:none;">Admin Panel</button>
+        <button class="btn" id="btnLogout" type="button">Logout</button>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section class="card auth" id="auth">
+        <h2>Login</h2>
+        <div class="row">
+          <label for="logUser">Username</label>
+          <input id="logUser" autocomplete="username" spellcheck="false" inputmode="text" />
+        </div>
+        <div class="row">
+          <label for="logPass">Passwort</label>
+          <input id="logPass" type="password" autocomplete="current-password" />
+        </div>
+        <button class="btn primary" id="btnLogin" type="button">Einloggen</button>
+
+        <div class="divider"></div>
+
+        <h2>Registrieren</h2>
+        <div class="row">
+          <label for="regUser">Username</label>
+          <input id="regUser" autocomplete="username" spellcheck="false" inputmode="text" />
+          <div class="hint">Erlaubt: A–Z, 0–9, Punkt, Unterstrich, Bindestrich</div>
+        </div>
+        <div class="row">
+          <label for="regPass">Passwort</label>
+          <input id="regPass" type="password" autocomplete="new-password" />
+          <div class="hint">Mindestens 4 Zeichen</div>
+        </div>
+        <div class="row">
+          <label for="regBio">Bio (optional)</label>
+          <input id="regBio" maxlength="200" autocomplete="off" />
+        </div>
+        <div class="row">
+          <label for="regAvatar">Avatar-URL (optional)</label>
+          <input id="regAvatar" inputmode="url" autocomplete="off" placeholder="https://..." />
+        </div>
+        <button class="btn" id="btnRegister" type="button">Account erstellen</button>
+
+        <div class="hint" style="margin-top:12px;">
+          Sicherheits-Tipp: Nutze ein Passwort, das du nirgendwo anders verwendest.
+        </div>
+      </section>
+
+      <section class="card app" id="app" style="display:none;">
+        <div class="panel">
+          <div class="panelLeft">
+            <h2>Raum</h2>
+            <div class="row compact">
+              <input id="room" value="lobby" spellcheck="false" inputmode="text" />
+              <button class="btn" id="btnJoin" type="button">Beitreten</button>
+            </div>
+
+            <div class="divider"></div>
+
+            <h2>Profil</h2>
+            <div class="row">
+              <label for="meBio">Bio</label>
+              <input id="meBio" maxlength="200" autocomplete="off" />
+            </div>
+            <div class="row">
+              <label for="meAvatar">Avatar-URL</label>
+              <input id="meAvatar" inputmode="url" autocomplete="off" placeholder="https://..." />
+            </div>
+            <button class="btn" id="btnSaveProfile" type="button">Speichern</button>
+
+            <div class="divider"></div>
+
+            <h2>Passwort</h2>
+            <div class="row">
+              <label for="pwOld">Altes Passwort</label>
+              <input id="pwOld" type="password" autocomplete="current-password" />
+            </div>
+            <div class="row">
+              <label for="pwNew">Neues Passwort</label>
+              <input id="pwNew" type="password" autocomplete="new-password" />
+            </div>
+            <button class="btn" id="btnChangePw" type="button">Passwort ändern</button>
+          </div>
+
+          <div class="panelRight">
+            <div class="chatTop">
+              <div class="chatTitle">
+                <div class="chatName">Chat</div>
+                <div class="chatRoom">#<span id="roomName">lobby</span></div>
+              </div>
+            </div>
+
+            <div class="chatBox" id="chat" role="log" aria-live="polite" aria-relevant="additions"></div>
+
+            <div class="chatComposer">
+              <input id="msg" placeholder="Nachricht schreiben…" maxlength="500" autocomplete="off" />
+              <button class="btn primary" id="btnSend" type="button">Senden</button>
+            </div>
+
+            <div class="hint" style="margin-top:10px;">
+              Keine privaten Daten posten. Räume sind öffentlich, wenn du sie teilst.
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <div class="modalOverlay" id="modalSetup" style="display:none;">
+      <div class="modalCard">
+        <div class="modalTop">
+          <div class="modalTitle">Admin Setup</div>
+          <button class="btn" id="btnSetupClose" type="button">Schließen</button>
+        </div>
+        <div class="hint" style="margin-top:6px;">Du musst beim ersten Login beide Passwörter neu setzen.</div>
+
+        <div class="divider"></div>
+
+        <div class="row">
+          <label for="setupCurrentLogin">Aktuelles Login-Passwort</label>
+          <input id="setupCurrentLogin" type="password" autocomplete="current-password" />
+        </div>
+        <div class="row">
+          <label for="setupNewLogin">Neues Login-Passwort</label>
+          <input id="setupNewLogin" type="password" autocomplete="new-password" />
+        </div>
+        <div class="row">
+          <label for="setupNewPanel">Neues Admin-Panel-Passwort</label>
+          <input id="setupNewPanel" type="password" autocomplete="new-password" />
+        </div>
+
+        <button class="btn primary" id="btnDoSetup" type="button">Setup speichern</button>
+        <div class="hint" style="margin-top:10px;">Merke dir beide Passwörter. Das Admin-Panel-Passwort wird beim Öffnen des Panels nochmal abgefragt.</div>
+      </div>
+    </div>
+
+    <div class="modalOverlay" id="modalUnlock" style="display:none;">
+      <div class="modalCard">
+        <div class="modalTop">
+          <div class="modalTitle">Admin Panel entsperren</div>
+          <button class="btn" id="btnUnlockClose" type="button">Schließen</button>
+        </div>
+        <div class="divider"></div>
+        <div class="row">
+          <label for="unlockPw">Admin-Panel-Passwort</label>
+          <input id="unlockPw" type="password" autocomplete="current-password" />
+        </div>
+        <button class="btn primary" id="btnDoUnlock" type="button">Entsperren</button>
+      </div>
+    </div>
+
+    <div class="modalOverlay" id="modalAdmin" style="display:none;">
+      <div class="modalCard wide">
+        <div class="modalTop">
+          <div class="modalTitle">Admin Panel</div>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <span class="pill" id="adminLockState">gesperrt</span>
+            <button class="btn" id="btnAdminLock" type="button">Sperren</button>
+            <button class="btn" id="btnAdminClose" type="button">Schließen</button>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="gridAdmin">
+  <div class="adminSection">
+    <div class="adminH">User verwalten</div>
+
+    <div class="row">
+      <label for="admTarget">Username</label>
+      <input id="admTarget" spellcheck="false" inputmode="text" />
+    </div>
+
+    <div class="row">
+      <label for="admReason">Grund (optional)</label>
+      <input id="admReason" maxlength="200" />
+    </div>
+
+    <div class="row">
+      <label for="admAction">Aktion</label>
+      <select id="admAction" class="select">
+        <option value="ban">Ban</option>
+        <option value="mute">Timeout (Mute)</option>
+        <option value="kick">Kick</option>
+        <option value="unban">Unban</option>
+        <option value="unmute">Unmute</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label for="admDur">Dauer</label>
+      <select id="admDur" class="select">
+        <option value="perm">Permanent</option>
+        <option value="600">10 Minuten</option>
+        <option value="3600">1 Stunde</option>
+        <option value="86400">24 Stunden</option>
+      </select>
+      <div class="hint">Bei Kick/Unban/Unmute ist Dauer egal.</div>
+    </div>
+
+    <button class="btn primary" id="btnAdmDo" type="button">Ausführen</button>
+
+    <div class="divider"></div>
+
+    <div class="adminH">Force-Room</div>
+    <div class="row">
+      <label for="admRoom">Raum</label>
+      <input id="admRoom" value="lobby" spellcheck="false" inputmode="text" />
+    </div>
+    <button class="btn" id="btnAdmForceRoom" type="button">In Raum zwingen</button>
+  </div>
+
+  <div class="adminSection">
+    <div class="adminH">User-Passwort ändern</div>
+    <div class="row">
+      <label for="admUser">Username</label>
+      <input id="admUser" spellcheck="false" inputmode="text" />
+    </div>
+    <div class="row">
+      <label for="admNewPw">Neues Passwort</label>
+      <input id="admNewPw" type="password" autocomplete="new-password" />
+    </div>
+    <button class="btn primary" id="btnAdmChangePw" type="button">Ändern</button>
+
+    <div class="divider"></div>
+
+    <div class="adminH">Panel Status</div>
+    <div class="hint">Vor Aktionen Panel entsperren (2. Passwort). Danach kannst du es wieder sperren.</div>
+    <div class="divider"></div>
+    <button class="btn" id="btnOpenUnlock" type="button">Panel entsperren</button>
+  </div>
+</div>
+          <div class="adminSection">
+            <div class="adminH">Schnellaktionen</div>
+            <div class="hint">Weitere Admin-Features (Ban/Timeout/Force-Room/Bots) bauen wir als nächstes hier rein, sobald die Basis sitzt.</div>
+            <div class="divider"></div>
+            <button class="btn" id="btnOpenUnlock" type="button">Panel entsperren</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="script.js?v=3"></script>
+</body>
+</html>
