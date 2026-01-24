@@ -6,6 +6,10 @@ import http from "http";
 import { WebSocketServer } from "ws";
 import { fileURLToPath } from "url";
 import pg from "pg";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import sanitizeHtml from "sanitize-html";
+import connectPgSimple from "connect-pg-simple";
 
 const { Pool } = pg;
 
@@ -92,14 +96,39 @@ async function initDb() {
   }
 }
 
+app.set("trust proxy", 1);
+
+app.use(helmet({
+  contentSecurityPolicy: false
+}));
+
 app.use(express.json({ limit: "200kb" }));
 
+app.use(rateLimit({
+  windowMs: 60_000,
+  limit: 240,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
+
+const PgSession = connectPgSimple(session);
+
 const sessionParser = session({
+  store: new PgSession({
+    pool,
+    tableName: "user_sessions",
+    createTableIfMissing: true
+  }),
   secret: process.env.SESSION_SECRET || "change-this-secret-please-12345",
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: "lax" }
+  cookie: {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: !!process.env.COOKIE_SECURE
+  }
 });
+
 app.use(sessionParser);
 
 app.use(express.static(path.join(__dirname, "public")));
@@ -481,6 +510,37 @@ app.post("/api/admin/force-room", requireAdminPanel, async (req, res) => {
     }
   }
   res.json({ ok: true, room: r });
+});
+
+function cleanAdminHtml(input) {
+  const raw = String(input || "").slice(0, 2000);
+  return sanitizeHtml(raw, {
+    allowedTags: ["b", "i", "u", "em", "strong", "br", "a", "code"],
+    allowedAttributes: {
+      a: ["href", "target", "rel"]
+    },
+    transformTags: {
+      a: sanitizeHtml.simpleTransform("a", { target: "_blank", rel: "noopener noreferrer" })
+    },
+    allowedSchemes: ["http", "https", "mailto"]
+  });
+}
+
+app.post("/api/admin/announce", requireAdminPanel, async (req, res) => {
+  const { room = "lobby", mode = "text", content = "" } = req.body || {};
+  const r = safeRoom(room);
+
+  let payload = { type: "system", event: "admin_announce", room: r, mode: "text", content: "" };
+
+  if (mode === "html") {
+    payload.mode = "html";
+    payload.content = cleanAdminHtml(content);
+  } else {
+    payload.content = String(content || "").slice(0, 800);
+  }
+
+  broadcastToRoom(r, payload);
+  res.json({ ok: true });
 });
 
 wss.on("connection", (ws) => {
