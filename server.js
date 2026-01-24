@@ -1,56 +1,39 @@
 import express from "express";
 import session from "express-session";
 import bcrypt from "bcryptjs";
-import Database from "better-sqlite3";
 import path from "path";
 import http from "http";
 import { WebSocketServer } from "ws";
 import { fileURLToPath } from "url";
+import pg from "pg";
+
+const { Pool } = pg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const db = new Database(path.join(__dirname, "data.db"));
 
-db.exec(`
-  PRAGMA journal_mode = WAL;
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error("Missing DATABASE_URL env var");
+  process.exit(1);
+}
 
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    pass_hash TEXT NOT NULL,
-    bio TEXT DEFAULT '',
-    avatar TEXT DEFAULT '',
-    role TEXT DEFAULT 'user',
-    created_at TEXT DEFAULT (datetime('now')),
-    needs_password_change INTEGER DEFAULT 0,
-    admin_panel_hash TEXT DEFAULT NULL,
-    admin_panel_needs_setup INTEGER DEFAULT 0
-  );
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
-  CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room TEXT NOT NULL DEFAULT 'lobby',
-    content TEXT NOT NULL,
-    author_id INTEGER NOT NULL,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY(author_id) REFERENCES users(id)
-  );
+function nowSec() {
+  return Math.floor(Date.now() / 1000);
+}
 
-  CREATE TABLE IF NOT EXISTS punishments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    type TEXT NOT NULL,              -- 'ban' | 'mute'
-    reason TEXT DEFAULT '',
-    until_ts INTEGER DEFAULT NULL,   -- unix seconds, NULL = permanent
-    created_at TEXT DEFAULT (datetime('now')),
-    created_by INTEGER NOT NULL,
-    active INTEGER DEFAULT 1,
-    FOREIGN KEY(user_id) REFERENCES users(id),
-    FOREIGN KEY(created_by) REFERENCES users(id)
-  );
-`);
+function safeRoom(input) {
+  const room = String(input || "lobby").trim().toLowerCase();
+  const cleaned = room.replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+  return cleaned || "lobby";
+}
 
 function hashPw(pw) {
   return bcrypt.hashSync(pw, 10);
@@ -58,44 +41,67 @@ function hashPw(pw) {
 function verifyPw(pw, hash) {
   try { return bcrypt.compareSync(String(pw), String(hash)); } catch { return false; }
 }
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
-}
-function safeRoom(input) {
-  const room = String(input || "lobby").trim().toLowerCase();
-  const cleaned = room.replace(/[^a-z0-9_-]/g, "").slice(0, 32);
-  return cleaned || "lobby";
-}
 
-function ensureColumn(table, col, typeSql) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(r => r.name);
-  if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${typeSql}`);
-}
-ensureColumn("users", "needs_password_change", "INTEGER DEFAULT 0");
-ensureColumn("users", "admin_panel_hash", "TEXT DEFAULT NULL");
-ensureColumn("users", "admin_panel_needs_setup", "INTEGER DEFAULT 0");
+async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGSERIAL PRIMARY KEY,
+      username TEXT UNIQUE NOT NULL,
+      pass_hash TEXT NOT NULL,
+      bio TEXT DEFAULT '',
+      avatar TEXT DEFAULT '',
+      role TEXT DEFAULT 'user',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      needs_password_change BOOLEAN DEFAULT FALSE,
+      admin_panel_hash TEXT DEFAULT NULL,
+      admin_panel_needs_setup BOOLEAN DEFAULT FALSE
+    );
 
-const adminRow = db.prepare("SELECT id FROM users WHERE username=?").get("admin");
-if (!adminRow) {
-  db.prepare(
-    "INSERT INTO users (username, pass_hash, bio, avatar, role, needs_password_change, admin_panel_hash, admin_panel_needs_setup) VALUES (?,?,?,?,?,?,?,?)"
-  ).run("admin", hashPw("admin123"), "Master Administrator", "", "admin", 1, hashPw("admin12"), 1);
-  console.log("Created default admin: admin / admin123 (CHANGE THIS!)");
+    CREATE TABLE IF NOT EXISTS messages (
+      id BIGSERIAL PRIMARY KEY,
+      room TEXT NOT NULL DEFAULT 'lobby',
+      content TEXT NOT NULL,
+      author_id BIGINT NOT NULL REFERENCES users(id),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages(room, id);
+
+    CREATE TABLE IF NOT EXISTS punishments (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id),
+      type TEXT NOT NULL,
+      reason TEXT DEFAULT '',
+      until_ts BIGINT DEFAULT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      created_by BIGINT NOT NULL REFERENCES users(id),
+      active BOOLEAN DEFAULT TRUE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_punish_user_active ON punishments(user_id, active, type);
+  `);
+
+  const admin = await pool.query(`SELECT id FROM users WHERE username=$1`, ["admin"]);
+  if (admin.rowCount === 0) {
+    await pool.query(
+      `INSERT INTO users (username, pass_hash, bio, role, needs_password_change, admin_panel_hash, admin_panel_needs_setup)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      ["admin", hashPw("admin123"), "Master Administrator", "admin", true, hashPw("admin12"), true]
+    );
+    console.log("Created default admin: admin / admin123 (CHANGE THIS!)");
+  }
 }
 
 app.use(express.json({ limit: "200kb" }));
 
 const sessionParser = session({
-  secret: "change-this-secret-please-12345",
+  secret: process.env.SESSION_SECRET || "change-this-secret-please-12345",
   resave: false,
   saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    sameSite: "lax"
-    // secure: true
-  }
+  cookie: { httpOnly: true, sameSite: "lax" }
 });
 app.use(sessionParser);
+
 app.use(express.static(path.join(__dirname, "public")));
 
 function requireAuth(req, res, next) {
@@ -114,92 +120,90 @@ function requireAdminPanel(req, res, next) {
   next();
 }
 
-function getUserByUsername(username) {
-  return db.prepare(
-    "SELECT id, username, role, pass_hash, needs_password_change, admin_panel_hash, admin_panel_needs_setup, bio, avatar FROM users WHERE username=?"
-  ).get(username);
+async function getUserByUsername(username) {
+  const r = await pool.query(
+    `SELECT id, username, role, pass_hash, needs_password_change, admin_panel_hash, admin_panel_needs_setup, bio, avatar
+     FROM users WHERE username=$1`,
+    [username]
+  );
+  return r.rows[0] || null;
 }
 function publicUser(u) {
-  return { id: u.id, username: u.username, role: u.role };
+  return { id: Number(u.id), username: u.username, role: u.role };
 }
 
-function cleanupPunishmentsForUser(user_id) {
+async function cleanupPunishmentsForUser(userId) {
   const t = nowSec();
-  db.prepare(`
-    UPDATE punishments
-    SET active=0
-    WHERE user_id=?
-      AND active=1
-      AND until_ts IS NOT NULL
-      AND until_ts <= ?
-  `).run(user_id, t);
+  await pool.query(
+    `UPDATE punishments
+     SET active=FALSE
+     WHERE user_id=$1 AND active=TRUE AND until_ts IS NOT NULL AND until_ts <= $2`,
+    [userId, t]
+  );
 }
 
-function getActivePunishment(user_id, type) {
-  cleanupPunishmentsForUser(user_id);
+async function getActivePunishment(userId, type) {
+  await cleanupPunishmentsForUser(userId);
   const t = nowSec();
-  return db.prepare(`
-    SELECT id, type, reason, until_ts
-    FROM punishments
-    WHERE user_id=?
-      AND type=?
-      AND active=1
-      AND (until_ts IS NULL OR until_ts > ?)
-    ORDER BY id DESC
-    LIMIT 1
-  `).get(user_id, type, t);
+  const r = await pool.query(
+    `SELECT id, type, reason, until_ts
+     FROM punishments
+     WHERE user_id=$1 AND type=$2 AND active=TRUE AND (until_ts IS NULL OR until_ts > $3)
+     ORDER BY id DESC
+     LIMIT 1`,
+    [userId, type, t]
+  );
+  return r.rows[0] || null;
 }
 
-function getPunishmentFlags(user_id) {
-  const ban = getActivePunishment(user_id, "ban");
-  const mute = getActivePunishment(user_id, "mute");
-  return {
-    banned: !!ban,
-    muted: !!mute,
-    ban,
-    mute
-  };
+async function getPunishmentFlags(userId) {
+  const ban = await getActivePunishment(userId, "ban");
+  const mute = await getActivePunishment(userId, "mute");
+  return { banned: !!ban, muted: !!mute, ban, mute };
 }
 
-function banCheckMiddleware(req, res, next) {
+async function banCheck(req, res, next) {
   if (!req.session.user) return next();
-  const flags = getPunishmentFlags(req.session.user.id);
+  const flags = await getPunishmentFlags(req.session.user.id);
   if (flags.banned) return res.status(403).json({ error: "banned" });
   next();
 }
 
-app.post("/api/register", (req, res) => {
-  const { username, password, bio = "", avatar = "" } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: "missing_fields" });
-
-  const cleanUser = String(username).trim().slice(0, 24);
-  if (cleanUser.length < 3) return res.status(400).json({ error: "username_short" });
-  if (!/^[a-zA-Z0-9_.-]+$/.test(cleanUser)) return res.status(400).json({ error: "username_invalid" });
-  if (String(password).length < 4) return res.status(400).json({ error: "password_short" });
-
+app.post("/api/register", async (req, res) => {
   try {
-    const info = db.prepare(
-      "INSERT INTO users (username, pass_hash, bio, avatar, role) VALUES (?,?,?,?, 'user')"
-    ).run(cleanUser, hashPw(password), String(bio).slice(0, 200), String(avatar).slice(0, 300));
+    const { username, password, bio = "", avatar = "" } = req.body || {};
+    if (!username || !password) return res.status(400).json({ error: "missing_fields" });
 
-    req.session.user = { id: info.lastInsertRowid, username: cleanUser, role: "user" };
+    const cleanUser = String(username).trim().slice(0, 24);
+    if (cleanUser.length < 3) return res.status(400).json({ error: "username_short" });
+    if (!/^[a-zA-Z0-9_.-]+$/.test(cleanUser)) return res.status(400).json({ error: "username_invalid" });
+    if (String(password).length < 4) return res.status(400).json({ error: "password_short" });
+
+    const r = await pool.query(
+      `INSERT INTO users (username, pass_hash, bio, avatar, role)
+       VALUES ($1,$2,$3,$4,'user')
+       RETURNING id`,
+      [cleanUser, hashPw(password), String(bio).slice(0, 200), String(avatar).slice(0, 300)]
+    );
+
+    req.session.user = { id: Number(r.rows[0].id), username: cleanUser, role: "user" };
     req.session.adminPanelUnlocked = false;
     res.json({ ok: true, user: req.session.user });
   } catch (e) {
-    if (String(e).includes("UNIQUE")) return res.status(409).json({ error: "username_taken" });
+    if (String(e).includes("duplicate key")) return res.status(409).json({ error: "username_taken" });
     res.status(500).json({ error: "server_error" });
   }
 });
 
-app.post("/api/login", (req, res) => {
+app.post("/api/login", async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: "missing_fields" });
 
-  const u = getUserByUsername(String(username).trim());
+  const u = await getUserByUsername(String(username).trim());
   if (!u) return res.status(401).json({ error: "bad_login" });
   if (!verifyPw(password, u.pass_hash)) return res.status(401).json({ error: "bad_login" });
 
-  const punish = getPunishmentFlags(u.id);
+  const punish = await getPunishmentFlags(Number(u.id));
   if (punish.banned) return res.status(403).json({ error: "banned" });
 
   req.session.user = publicUser(u);
@@ -220,12 +224,12 @@ app.post("/api/logout", (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 
-app.get("/api/me", (req, res) => {
+app.get("/api/me", async (req, res) => {
   if (!req.session.user) return res.json({ user: null });
-  const u = getUserByUsername(req.session.user.username);
+  const u = await getUserByUsername(req.session.user.username);
   if (!u) return res.json({ user: null });
 
-  const punish = getPunishmentFlags(u.id);
+  const punish = await getPunishmentFlags(Number(u.id));
 
   res.json({
     user: req.session.user,
@@ -239,76 +243,80 @@ app.get("/api/me", (req, res) => {
   });
 });
 
-app.get("/api/profile/:username", (req, res) => {
-  const u = db.prepare(
-    "SELECT username, bio, avatar, role, created_at FROM users WHERE username=?"
-  ).get(req.params.username);
-  if (!u) return res.status(404).json({ error: "not_found" });
-  res.json({ profile: u });
+app.get("/api/profile/:username", async (req, res) => {
+  const r = await pool.query(
+    `SELECT username, bio, avatar, role, created_at FROM users WHERE username=$1`,
+    [req.params.username]
+  );
+  if (r.rowCount === 0) return res.status(404).json({ error: "not_found" });
+  res.json({ profile: r.rows[0] });
 });
 
-app.post("/api/profile", requireAuth, banCheckMiddleware, (req, res) => {
+app.post("/api/profile", requireAuth, banCheck, async (req, res) => {
   const { bio = "", avatar = "" } = req.body || {};
-  db.prepare("UPDATE users SET bio=?, avatar=? WHERE id=?").run(
-    String(bio).slice(0, 200),
-    String(avatar).slice(0, 300),
-    req.session.user.id
+  await pool.query(
+    `UPDATE users SET bio=$1, avatar=$2 WHERE id=$3`,
+    [String(bio).slice(0, 200), String(avatar).slice(0, 300), req.session.user.id]
   );
   res.json({ ok: true });
 });
 
-app.post("/api/change-password", requireAuth, banCheckMiddleware, (req, res) => {
+app.post("/api/change-password", requireAuth, banCheck, async (req, res) => {
   const { oldPassword, newPassword } = req.body || {};
   if (!oldPassword || !newPassword) return res.status(400).json({ error: "missing_fields" });
   if (String(newPassword).length < 4) return res.status(400).json({ error: "password_short" });
 
-  const u = db.prepare("SELECT id, pass_hash FROM users WHERE id=?").get(req.session.user.id);
-  if (!u || !verifyPw(oldPassword, u.pass_hash)) return res.status(401).json({ error: "bad_login" });
+  const r = await pool.query(`SELECT pass_hash FROM users WHERE id=$1`, [req.session.user.id]);
+  if (r.rowCount === 0) return res.status(401).json({ error: "bad_login" });
+  if (!verifyPw(oldPassword, r.rows[0].pass_hash)) return res.status(401).json({ error: "bad_login" });
 
-  db.prepare("UPDATE users SET pass_hash=?, needs_password_change=0 WHERE id=?")
-    .run(hashPw(newPassword), req.session.user.id);
-
+  await pool.query(
+    `UPDATE users SET pass_hash=$1, needs_password_change=FALSE WHERE id=$2`,
+    [hashPw(newPassword), req.session.user.id]
+  );
   res.json({ ok: true });
 });
 
-app.post("/api/admin/setup", requireAdmin, (req, res) => {
+app.post("/api/admin/setup", requireAdmin, async (req, res) => {
   const { currentLoginPassword, newLoginPassword, newAdminPanelPassword } = req.body || {};
-  if (!currentLoginPassword || !newLoginPassword || !newAdminPanelPassword) {
-    return res.status(400).json({ error: "missing_fields" });
-  }
+  if (!currentLoginPassword || !newLoginPassword || !newAdminPanelPassword) return res.status(400).json({ error: "missing_fields" });
   if (String(newLoginPassword).length < 6) return res.status(400).json({ error: "password_short" });
   if (String(newAdminPanelPassword).length < 6) return res.status(400).json({ error: "password_short" });
 
-  const u = db.prepare(
-    "SELECT id, pass_hash, needs_password_change, admin_panel_needs_setup FROM users WHERE id=?"
-  ).get(req.session.user.id);
+  const r = await pool.query(
+    `SELECT pass_hash, needs_password_change, admin_panel_needs_setup FROM users WHERE id=$1`,
+    [req.session.user.id]
+  );
+  if (r.rowCount === 0) return res.status(500).json({ error: "server_error" });
 
-  if (!u) return res.status(500).json({ error: "server_error" });
-
-  if (!u.needs_password_change && !u.admin_panel_needs_setup) {
-    return res.status(403).json({ error: "setup_not_required" });
-  }
+  const u = r.rows[0];
+  if (!u.needs_password_change && !u.admin_panel_needs_setup) return res.status(403).json({ error: "setup_not_required" });
   if (!verifyPw(currentLoginPassword, u.pass_hash)) return res.status(401).json({ error: "bad_login" });
 
-  db.prepare(
-    "UPDATE users SET pass_hash=?, needs_password_change=0, admin_panel_hash=?, admin_panel_needs_setup=0 WHERE id=?"
-  ).run(hashPw(newLoginPassword), hashPw(newAdminPanelPassword), req.session.user.id);
+  await pool.query(
+    `UPDATE users
+     SET pass_hash=$1, needs_password_change=FALSE, admin_panel_hash=$2, admin_panel_needs_setup=FALSE
+     WHERE id=$3`,
+    [hashPw(newLoginPassword), hashPw(newAdminPanelPassword), req.session.user.id]
+  );
 
   req.session.adminPanelUnlocked = false;
   res.json({ ok: true });
 });
 
-app.post("/api/admin/panel/unlock", requireAdmin, (req, res) => {
+app.post("/api/admin/panel/unlock", requireAdmin, async (req, res) => {
   const { adminPanelPassword } = req.body || {};
   if (!adminPanelPassword) return res.status(400).json({ error: "missing_fields" });
 
-  const u = db.prepare("SELECT admin_panel_hash, admin_panel_needs_setup FROM users WHERE id=?").get(req.session.user.id);
-  if (!u) return res.status(500).json({ error: "server_error" });
-  if (u.admin_panel_needs_setup) return res.status(403).json({ error: "admin_panel_needs_setup" });
+  const r = await pool.query(
+    `SELECT admin_panel_hash, admin_panel_needs_setup FROM users WHERE id=$1`,
+    [req.session.user.id]
+  );
+  if (r.rowCount === 0) return res.status(500).json({ error: "server_error" });
 
-  if (!u.admin_panel_hash || !verifyPw(adminPanelPassword, u.admin_panel_hash)) {
-    return res.status(401).json({ error: "admin_panel_bad_password" });
-  }
+  const u = r.rows[0];
+  if (u.admin_panel_needs_setup) return res.status(403).json({ error: "admin_panel_needs_setup" });
+  if (!u.admin_panel_hash || !verifyPw(adminPanelPassword, u.admin_panel_hash)) return res.status(401).json({ error: "admin_panel_bad_password" });
 
   req.session.adminPanelUnlocked = true;
   res.json({ ok: true });
@@ -319,60 +327,43 @@ app.post("/api/admin/panel/lock", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/admin/change-user-password", requireAdminPanel, (req, res) => {
+app.post("/api/admin/change-user-password", requireAdminPanel, async (req, res) => {
   const { username, newPassword } = req.body || {};
   if (!username || !newPassword) return res.status(400).json({ error: "missing_fields" });
   if (String(newPassword).length < 4) return res.status(400).json({ error: "password_short" });
 
-  const target = db.prepare("SELECT id, role FROM users WHERE username=?").get(String(username).trim());
-  if (!target) return res.status(404).json({ error: "not_found" });
-  if (target.role === "admin") return res.status(403).json({ error: "cannot_change_admin" });
+  const target = await pool.query(`SELECT id, role FROM users WHERE username=$1`, [String(username).trim()]);
+  if (target.rowCount === 0) return res.status(404).json({ error: "not_found" });
+  if (target.rows[0].role === "admin") return res.status(403).json({ error: "cannot_change_admin" });
 
-  db.prepare("UPDATE users SET pass_hash=?, needs_password_change=1 WHERE id=?").run(hashPw(newPassword), target.id);
+  await pool.query(
+    `UPDATE users SET pass_hash=$1, needs_password_change=TRUE WHERE id=$2`,
+    [hashPw(newPassword), Number(target.rows[0].id)]
+  );
+
   res.json({ ok: true });
 });
 
-app.get("/api/messages", requireAuth, banCheckMiddleware, (req, res) => {
+app.get("/api/messages", requireAuth, banCheck, async (req, res) => {
   const room = safeRoom(req.query.room);
   const limit = Math.min(Number(req.query.limit || 80), 200);
 
-  const rows = db.prepare(`
-    SELECT m.id, m.room, m.content, m.created_at,
-           u.username AS author, u.avatar AS avatar, u.role AS role
-    FROM messages m
-    JOIN users u ON u.id = m.author_id
-    WHERE m.room=?
-    ORDER BY m.id DESC
-    LIMIT ?
-  `).all(room, limit).reverse();
+  const r = await pool.query(
+    `SELECT m.id, m.room, m.content, m.created_at,
+            u.username AS author, u.avatar AS avatar, u.role AS role
+     FROM messages m
+     JOIN users u ON u.id = m.author_id
+     WHERE m.room=$1
+     ORDER BY m.id DESC
+     LIMIT $2`,
+    [room, limit]
+  );
 
-  res.json({ messages: rows, room });
+  res.json({ messages: r.rows.reverse(), room });
 });
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
-
-server.on("upgrade", (req, socket, head) => {
-  sessionParser(req, {}, () => {
-    if (!req.session?.user) {
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    const punish = getPunishmentFlags(req.session.user.id);
-    if (punish.banned) {
-      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      ws.user = req.session.user;
-      ws.room = "lobby";
-      wss.emit("connection", ws);
-    });
-  });
-});
 
 function broadcastToRoom(room, payload) {
   const msg = JSON.stringify(payload);
@@ -395,10 +386,107 @@ function kickUser(username, reason = "kicked") {
   }
 }
 
+server.on("upgrade", async (req, socket, head) => {
+  sessionParser(req, {}, async () => {
+    if (!req.session?.user) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    const punish = await getPunishmentFlags(req.session.user.id);
+    if (punish.banned) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      ws.user = req.session.user;
+      ws.room = "lobby";
+      wss.emit("connection", ws);
+    });
+  });
+});
+
+function parseDurationSec(input) {
+  const v = String(input || "perm");
+  if (v === "perm") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.floor(n);
+}
+
+app.post("/api/admin/punish", requireAdminPanel, async (req, res) => {
+  const { username, action, durationSec, reason = "" } = req.body || {};
+  if (!username || !action) return res.status(400).json({ error: "missing_fields" });
+
+  const target = await pool.query(`SELECT id, role FROM users WHERE username=$1`, [String(username).trim()]);
+  if (target.rowCount === 0) return res.status(404).json({ error: "not_found" });
+  if (target.rows[0].role === "admin") return res.status(403).json({ error: "cannot_punish_admin" });
+
+  const userId = Number(target.rows[0].id);
+  const dur = parseDurationSec(durationSec);
+  const until_ts = dur === null ? null : nowSec() + dur;
+
+  if (action === "ban" || action === "mute") {
+    await pool.query(
+      `UPDATE punishments SET active=FALSE WHERE user_id=$1 AND type=$2 AND active=TRUE`,
+      [userId, action]
+    );
+    await pool.query(
+      `INSERT INTO punishments (user_id, type, reason, until_ts, created_by, active)
+       VALUES ($1,$2,$3,$4,$5,TRUE)`,
+      [userId, action, String(reason).slice(0, 200), until_ts, req.session.user.id]
+    );
+
+    if (action === "ban") kickUser(String(username).trim(), "banned");
+    if (action === "mute") sendToUser(String(username).trim(), { type: "system", event: "muted_set", until_ts, reason: String(reason).slice(0, 200) });
+
+    return res.json({ ok: true });
+  }
+
+  if (action === "unban") {
+    await pool.query(`UPDATE punishments SET active=FALSE WHERE user_id=$1 AND type='ban' AND active=TRUE`, [userId]);
+    return res.json({ ok: true });
+  }
+
+  if (action === "unmute") {
+    await pool.query(`UPDATE punishments SET active=FALSE WHERE user_id=$1 AND type='mute' AND active=TRUE`, [userId]);
+    sendToUser(String(username).trim(), { type: "system", event: "unmuted" });
+    return res.json({ ok: true });
+  }
+
+  if (action === "kick") {
+    kickUser(String(username).trim(), String(reason).slice(0, 200) || "kicked");
+    return res.json({ ok: true });
+  }
+
+  return res.status(400).json({ error: "bad_action" });
+});
+
+app.post("/api/admin/force-room", requireAdminPanel, async (req, res) => {
+  const { username, room } = req.body || {};
+  if (!username || !room) return res.status(400).json({ error: "missing_fields" });
+
+  const target = await pool.query(`SELECT id, role FROM users WHERE username=$1`, [String(username).trim()]);
+  if (target.rowCount === 0) return res.status(404).json({ error: "not_found" });
+  if (target.rows[0].role === "admin") return res.status(403).json({ error: "cannot_force_admin" });
+
+  const r = safeRoom(room);
+  sendToUser(String(username).trim(), { type: "system", event: "force_room", room: r });
+  for (const client of wss.clients) {
+    if (client.readyState === 1 && client.user?.username === String(username).trim()) {
+      client.room = r;
+      try { client.send(JSON.stringify({ type: "joined", room: r })); } catch {}
+    }
+  }
+  res.json({ ok: true, room: r });
+});
+
 wss.on("connection", (ws) => {
   ws.send(JSON.stringify({ type: "hello", user: ws.user, room: ws.room }));
 
-  ws.on("message", (raw) => {
+  ws.on("message", async (raw) => {
     let data;
     try { data = JSON.parse(String(raw)); } catch { return; }
 
@@ -412,137 +500,44 @@ wss.on("connection", (ws) => {
       const text = String(data.text || "").trim();
       if (!text || text.length > 500) return;
 
-      const punish = getPunishmentFlags(ws.user.id);
+      const punish = await getPunishmentFlags(ws.user.id);
       if (punish.banned) {
         try { ws.send(JSON.stringify({ type: "system", event: "banned" })); } catch {}
         try { ws.close(); } catch {}
         return;
       }
       if (punish.muted) {
-        ws.send(JSON.stringify({
-          type: "system",
-          event: "muted",
-          until_ts: punish.mute?.until_ts ?? null,
-          reason: punish.mute?.reason ?? ""
-        }));
+        ws.send(JSON.stringify({ type: "system", event: "muted", until_ts: punish.mute?.until_ts ?? null, reason: punish.mute?.reason ?? "" }));
         return;
       }
 
-      const info = db.prepare("INSERT INTO messages (room, content, author_id) VALUES (?,?,?)")
-        .run(ws.room, text, ws.user.id);
+      const ins = await pool.query(
+        `INSERT INTO messages (room, content, author_id) VALUES ($1,$2,$3) RETURNING id, created_at`,
+        [ws.room, text, ws.user.id]
+      );
 
-      const msg = db.prepare(`
-        SELECT m.id, m.room, m.content, m.created_at,
-               u.username AS author, u.avatar AS avatar, u.role AS role
-        FROM messages m
-        JOIN users u ON u.id = m.author_id
-        WHERE m.id=?
-      `).get(info.lastInsertRowid);
+      const msgId = Number(ins.rows[0].id);
+      const r = await pool.query(
+        `SELECT m.id, m.room, m.content, m.created_at,
+                u.username AS author, u.avatar AS avatar, u.role AS role
+         FROM messages m
+         JOIN users u ON u.id = m.author_id
+         WHERE m.id=$1`,
+        [msgId]
+      );
 
-      broadcastToRoom(ws.room, { type: "message", message: msg });
+      broadcastToRoom(ws.room, { type: "message", message: r.rows[0] });
     }
   });
 });
 
-function parseDurationSec(input) {
-  const v = String(input || "perm");
-  if (v === "perm") return null;
-  const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.floor(n);
-}
-
-app.post("/api/admin/punish", requireAdminPanel, (req, res) => {
-  const { username, action, durationSec, reason = "" } = req.body || {};
-  if (!username || !action) return res.status(400).json({ error: "missing_fields" });
-
-  const target = db.prepare("SELECT id, role FROM users WHERE username=?").get(String(username).trim());
-  if (!target) return res.status(404).json({ error: "not_found" });
-  if (target.role === "admin") return res.status(403).json({ error: "cannot_punish_admin" });
-
-  const dur = parseDurationSec(durationSec);
-  const until_ts = dur === null ? null : nowSec() + dur;
-
-  if (action === "ban") {
-    db.prepare(`
-      UPDATE punishments
-      SET active=0
-      WHERE user_id=? AND type='ban' AND active=1
-    `).run(target.id);
-
-    db.prepare(`
-      INSERT INTO punishments (user_id, type, reason, until_ts, created_by, active)
-      VALUES (?, 'ban', ?, ?, ?, 1)
-    `).run(target.id, String(reason).slice(0, 200), until_ts, req.session.user.id);
-
-    kickUser(String(username).trim(), "banned");
-    return res.json({ ok: true });
-  }
-
-  if (action === "mute") {
-    db.prepare(`
-      UPDATE punishments
-      SET active=0
-      WHERE user_id=? AND type='mute' AND active=1
-    `).run(target.id);
-
-    db.prepare(`
-      INSERT INTO punishments (user_id, type, reason, until_ts, created_by, active)
-      VALUES (?, 'mute', ?, ?, ?, 1)
-    `).run(target.id, String(reason).slice(0, 200), until_ts, req.session.user.id);
-
-    sendToUser(String(username).trim(), { type: "system", event: "muted_set", until_ts, reason: String(reason).slice(0, 200) });
-    return res.json({ ok: true });
-  }
-
-  if (action === "unban") {
-    db.prepare(`
-      UPDATE punishments
-      SET active=0
-      WHERE user_id=? AND type='ban' AND active=1
-    `).run(target.id);
-    return res.json({ ok: true });
-  }
-
-  if (action === "unmute") {
-    db.prepare(`
-      UPDATE punishments
-      SET active=0
-      WHERE user_id=? AND type='mute' AND active=1
-    `).run(target.id);
-    sendToUser(String(username).trim(), { type: "system", event: "unmuted" });
-    return res.json({ ok: true });
-  }
-
-  if (action === "kick") {
-    kickUser(String(username).trim(), String(reason).slice(0, 200) || "kicked");
-    return res.json({ ok: true });
-  }
-
-  return res.status(400).json({ error: "bad_action" });
-});
-
-app.post("/api/admin/force-room", requireAdminPanel, (req, res) => {
-  const { username, room } = req.body || {};
-  if (!username || !room) return res.status(400).json({ error: "missing_fields" });
-
-  const target = db.prepare("SELECT id, role FROM users WHERE username=?").get(String(username).trim());
-  if (!target) return res.status(404).json({ error: "not_found" });
-  if (target.role === "admin") return res.status(403).json({ error: "cannot_force_admin" });
-
-  const r = safeRoom(room);
-  sendToUser(String(username).trim(), { type: "system", event: "force_room", room: r });
-  for (const client of wss.clients) {
-    if (client.readyState === 1 && client.user?.username === String(username).trim()) {
-      client.room = r;
-      try { client.send(JSON.stringify({ type: "joined", room: r })); } catch {}
-    }
-  }
-
-  res.json({ ok: true, room: r });
-});
-
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running: http://localhost:${PORT}`);
-});
+
+initDb()
+  .then(() => {
+    server.listen(PORT, "0.0.0.0", () => console.log(`Server running: http://localhost:${PORT}`));
+  })
+  .catch((e) => {
+    console.error("DB init failed:", e);
+    process.exit(1);
+  });
