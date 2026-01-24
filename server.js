@@ -1,41 +1,65 @@
 import express from "express";
+import session from "express-session";
+import bcrypt from "bcryptjs";
 import path from "path";
-import { fileURLToPath } from "url";
 import http from "http";
 import { WebSocketServer } from "ws";
+import { fileURLToPath } from "url";
+import pg from "pg";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import sanitizeHtml from "sanitize-html";
+import connectPgSimple from "connect-pg-simple";
 
-// WICHTIG: Pfade korrekt definieren
+const { Pool } = pg;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const server = http.createServer(app);
-const PORT = process.env.PORT || 3000;
 
-// Statische Dateien (CSS, JS, Bilder) direkt aus dem Root-Verzeichnis servieren
-// Das sorgt dafür, dass ./style.css und ./script.js gefunden werden
-app.use(express.static(__dirname));
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error("Missing DATABASE_URL env var");
+  process.exit(1);
+}
 
-// Die Hauptroute für die index.html
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
 });
 
-// Fallback für Single Page Application (optional, falls du Unterseiten nutzt)
+// --- PFAD-ANPASSUNG FÜR DEINEN PUBLIC-ORDNER ---
+// Statische Dateien (CSS, JS) aus dem Unterordner 'public' laden
+app.use(express.static(path.join(__dirname, "public")));
+
+app.use(express.json());
+
+const pgSession = connectPgSimple(session);
+app.use(session({
+  store: new pgSession({ pool, tableName: "session" }),
+  secret: process.env.SESSION_SECRET || "super-secret-key",
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000, secure: false }
+}));
+
+// Deine API-Routen (Login, Register, etc.) bleiben hier...
+// [Hier steht dein existierender Code für app.post('/api/login') etc.]
+
+// Die Route für die Startseite - zeigt jetzt auf den public-Ordner
 app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// Dummy WebSocket Setup (damit der Server nicht abstürzt, falls script.js connectet)
+const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
-wss.on('connection', (ws) => {
-  console.log('Ein Client hat sich verbunden');
-  ws.on('message', (message) => {
-    console.log('Empfangen:', message.toString());
-  });
-});
 
+// Dein WebSocket-Code bleibt hier...
+// [Hier steht dein existierender wss.on('connection') Code]
+
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`🚀 Server läuft auf Port ${PORT}`);
-  console.log(`📂 Arbeitsverzeichnis: ${__dirname}`);
+  console.log(`🚀 Chatly läuft auf Port ${PORT}`);
+  console.log(`📂 Statische Dateien werden aus /public serviert`);
 });
