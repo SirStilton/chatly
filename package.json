@@ -1,5 +1,5 @@
 {
-  "name": "nexus-blog",
+  "name": "chatly",
   "version": "1.0.0",
   "type": "module",
   "main": "server.js",
@@ -7,10 +7,11 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.1.2",
+    "bcrypt": "^5.1.0",
+    "cors": "^2.8.5",
     "express": "^4.19.2",
     "express-session": "^1.17.3",
-    "ws": "^8.19.0"
+    "pg": "^8.11.5",
+    "ws": "^8.16.0"
   }
 }
