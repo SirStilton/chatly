@@ -5,7 +5,6 @@ import pg from "pg";
 import connectPgSimple from "connect-pg-simple";
 import bcrypt from "bcryptjs";
 import { WebSocketServer } from "ws";
-import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -31,20 +30,24 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "64kb" }));
 app.use(express.urlencoded({ extended: false }));
 
-function shouldUseSsl(url) {
-  const s = String(url || "");
-  // Supabase Pooler/DB braucht SSL; Render->Supabase praktisch immer.
-  return (
-    s.includes("supabase.com") ||
-    s.includes("sslmode=require") ||
-    s.includes("pooler") ||
-    isProd
-  );
+function stripQuery(urlString) {
+  try {
+    const u = new URL(urlString);
+    u.search = "";
+    return u.toString();
+  } catch {
+    return urlString;
+  }
+}
+
+function useSsl(urlString) {
+  const s = String(urlString || "").toLowerCase();
+  return s.includes("supabase.com") || s.includes("pooler") || isProd;
 }
 
 const pool = new pg.Pool({
-  connectionString: DATABASE_URL,
-  ssl: shouldUseSsl(DATABASE_URL) ? { rejectUnauthorized: false } : undefined,
+  connectionString: stripQuery(DATABASE_URL),
+  ssl: useSsl(DATABASE_URL) ? { rejectUnauthorized: false } : undefined,
 });
 
 const PgStore = connectPgSimple(session);
@@ -69,7 +72,7 @@ const sessionMiddleware = session({
 
 app.use(sessionMiddleware);
 
-app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"] }));
+app.use(express.static(__dirname, { extensions: ["html"] }));
 
 function now() {
   return new Date();
@@ -103,8 +106,7 @@ function validPassword(p) {
 }
 
 async function q(text, params = []) {
-  const r = await pool.query(text, params);
-  return r;
+  return pool.query(text, params);
 }
 
 async function initDb() {
@@ -147,7 +149,6 @@ async function initDb() {
     );
   `);
 
-  // Idempotente Adds (falls DB mal älter war)
   await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_until TIMESTAMPTZ;`);
   await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS timeout_until TIMESTAMPTZ;`);
   await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_password_change BOOLEAN NOT NULL DEFAULT FALSE;`);
@@ -160,15 +161,19 @@ async function initDb() {
 
   const roomCount = await q(`SELECT COUNT(*)::int AS c FROM rooms;`);
   if (roomCount.rows[0].c === 0) {
-    await q(`INSERT INTO rooms (slug, title, is_private) VALUES ($1,$2,$3), ($4,$5,$6);`, [
-      "lobby", "Lobby", false,
-      "fun", "Fun", false,
-    ]);
+    await q(
+      `INSERT INTO rooms (slug, title, is_private) VALUES ($1,$2,$3), ($4,$5,$6);`,
+      ["lobby", "Lobby", false, "fun", "Fun", false]
+    );
   }
 }
 
 async function getUserById(id) {
-  const r = await q(`SELECT id, username, bio, avatar_url, role, banned_until, timeout_until, needs_password_change, session_version FROM users WHERE id=$1;`, [id]);
+  const r = await q(
+    `SELECT id, username, bio, avatar_url, role, banned_until, timeout_until, needs_password_change, session_version
+     FROM users WHERE id=$1;`,
+    [id]
+  );
   return r.rows[0] || null;
 }
 
@@ -198,7 +203,12 @@ async function requireFreshSession(req, res, next) {
 
   if (u.banned_until && new Date(u.banned_until) > now()) return res.status(403).json({ ok: false, error: "banned" });
 
-  if (u.needs_password_change && req.path !== "/api/change-password" && req.path !== "/api/logout" && req.path !== "/api/me") {
+  if (
+    u.needs_password_change &&
+    req.path !== "/api/change-password" &&
+    req.path !== "/api/logout" &&
+    req.path !== "/api/me"
+  ) {
     return res.status(403).json({ ok: false, error: "password_change_required" });
   }
 
@@ -211,11 +221,19 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+async function enforcePunishments(userId) {
+  const u = await getUserById(userId);
+  if (!u) return { ok: false, error: "not_found" };
+  if (u.banned_until && new Date(u.banned_until) > now()) return { ok: false, error: "banned" };
+  if (u.timeout_until && new Date(u.timeout_until) > now()) return { ok: false, error: "timeout" };
+  return { ok: true };
+}
+
 app.get("/api/health", async (_req, res) => {
   try {
     await q("SELECT 1;");
     res.json({ ok: true });
-  } catch {
+  } catch (e) {
     res.status(500).json({ ok: false });
   }
 });
@@ -236,7 +254,9 @@ app.post("/api/register", async (req, res) => {
   const pass_hash = await bcrypt.hash(password, 12);
 
   const r = await q(
-    `INSERT INTO users (username, pass_hash, bio, avatar_url) VALUES ($1,$2,$3,$4) RETURNING id, username, role, session_version;`,
+    `INSERT INTO users (username, pass_hash, bio, avatar_url)
+     VALUES ($1,$2,$3,$4)
+     RETURNING id, username, role, session_version;`,
     [username, pass_hash, bio, avatarUrl]
   );
 
@@ -307,43 +327,20 @@ app.post("/api/change-password", requireAuth, requireFreshSession, async (req, r
   const pass_hash = await bcrypt.hash(newPassword, 12);
 
   const r = await q(
-    `UPDATE users SET pass_hash=$1, needs_password_change=FALSE, session_version=session_version+1 WHERE id=$2 RETURNING session_version;`,
+    `UPDATE users
+     SET pass_hash=$1, needs_password_change=FALSE, session_version=session_version+1
+     WHERE id=$2
+     RETURNING session_version;`,
     [pass_hash, req.user.id]
   );
 
   req.session.sessionVersion = r.rows[0].session_version;
-
   res.json({ ok: true });
 });
 
 app.get("/api/rooms", requireAuth, requireFreshSession, async (_req, res) => {
   const r = await q(`SELECT slug, title, is_private FROM rooms ORDER BY created_at ASC;`);
   res.json({ ok: true, rooms: r.rows });
-});
-
-app.post("/api/rooms", requireAuth, requireFreshSession, async (req, res) => {
-  const slug = String(req.body.slug || "").trim().toLowerCase();
-  const title = String(req.body.title || "").trim().slice(0, 40);
-  const isPrivate = !!req.body.isPrivate;
-  const password = req.body.password;
-
-  if (!/^[a-z0-9-]{3,24}$/.test(slug)) return res.status(400).json({ ok: false, error: "bad_slug" });
-  if (!title) return res.status(400).json({ ok: false, error: "bad_title" });
-
-  let pass_hash = null;
-  if (isPrivate) {
-    if (!validPassword(password)) return res.status(400).json({ ok: false, error: "bad_room_password" });
-    pass_hash = await bcrypt.hash(password, 12);
-  }
-
-  try {
-    await q(`INSERT INTO rooms (slug, title, is_private, pass_hash, created_by) VALUES ($1,$2,$3,$4,$5);`, [
-      slug, title, isPrivate, pass_hash, req.user.id,
-    ]);
-    res.json({ ok: true });
-  } catch {
-    res.status(409).json({ ok: false, error: "room_exists" });
-  }
 });
 
 app.post("/api/rooms/join", requireAuth, requireFreshSession, async (req, res) => {
@@ -366,6 +363,7 @@ app.post("/api/rooms/join", requireAuth, requireFreshSession, async (req, res) =
 app.get("/api/messages", requireAuth, requireFreshSession, async (req, res) => {
   const slug = String(req.query.room || req.session.roomSlug || "lobby").trim().toLowerCase();
   const limit = Math.max(1, Math.min(100, parseInt(req.query.limit || "50", 10)));
+
   const room = await getRoomBySlug(slug);
   if (!room) return res.status(404).json({ ok: false, error: "room_not_found" });
 
@@ -387,25 +385,6 @@ app.get("/api/messages", requireAuth, requireFreshSession, async (req, res) => {
   res.json({ ok: true, messages: r.rows.reverse() });
 });
 
-async function enforcePunishments(userId) {
-  const u = await getUserById(userId);
-  if (!u) return { ok: false, error: "not_found" };
-  if (u.banned_until && new Date(u.banned_until) > now()) return { ok: false, error: "banned" };
-  if (u.timeout_until && new Date(u.timeout_until) > now()) return { ok: false, error: "timeout" };
-  return { ok: true };
-}
-
-const socketsByUserId = new Map();
-
-function broadcastToRoom(roomSlug, payload) {
-  const msg = JSON.stringify(payload);
-  for (const ws of socketsByUserId.values()) {
-    if (ws.readyState !== 1) continue;
-    if (ws.roomSlug !== roomSlug) continue;
-    ws.send(msg);
-  }
-}
-
 app.post("/api/messages", requireAuth, requireFreshSession, async (req, res) => {
   const roomSlug = String(req.body.room || req.session.roomSlug || "lobby").trim().toLowerCase();
   const rawBody = String(req.body.body || "");
@@ -422,7 +401,8 @@ app.post("/api/messages", requireAuth, requireFreshSession, async (req, res) => 
   const safeBody = escapeHtml(body);
 
   const r = await q(
-    `INSERT INTO messages (room_id, author_id, body, is_admin) VALUES ($1,$2,$3,$4)
+    `INSERT INTO messages (room_id, author_id, body, is_admin)
+     VALUES ($1,$2,$3,$4)
      RETURNING id, created_at, is_admin;`,
     [room.id, req.user.id, safeBody, req.user.role === "admin"]
   );
@@ -460,7 +440,9 @@ app.post("/api/admin/bootstrap", async (req, res) => {
   const pass_hash = await bcrypt.hash(password, 12);
 
   const r = await q(
-    `INSERT INTO users (username, pass_hash, role, needs_password_change) VALUES ($1,$2,'admin',TRUE) RETURNING id, session_version;`,
+    `INSERT INTO users (username, pass_hash, role, needs_password_change)
+     VALUES ($1,$2,'admin',TRUE)
+     RETURNING id, session_version;`,
     [username, pass_hash]
   );
 
@@ -505,21 +487,33 @@ app.post("/api/admin/force-password-reset", requireAuth, requireFreshSession, re
   res.json({ ok: true });
 });
 
-const server = app.listen(parseInt(PORT || "10000", 10), async () => {
-  await initDb();
+const socketsByUserId = new Map();
+
+function broadcastToRoom(roomSlug, payload) {
+  const msg = JSON.stringify(payload);
+  for (const ws of socketsByUserId.values()) {
+    if (ws.readyState !== 1) continue;
+    if (ws.roomSlug !== roomSlug) continue;
+    ws.send(msg);
+  }
+}
+
+const server = app.listen(parseInt(PORT || "10000", 10), () => {
   console.log(`Chatly listening on :${PORT || 10000}`);
 });
+
+initDb()
+  .then(() => console.log("DB ready"))
+  .catch((e) => {
+    console.error("DB init error:", e);
+    process.exit(1);
+  });
 
 const wss = new WebSocketServer({ noServer: true });
 
 function runSession(req) {
   return new Promise((resolve) => {
-    const res = {
-      getHeader() {},
-      setHeader() {},
-      writeHead() {},
-      end() {},
-    };
+    const res = { getHeader() {}, setHeader() {}, writeHead() {}, end() {} };
     sessionMiddleware(req, res, resolve);
   });
 }
