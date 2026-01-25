@@ -12,17 +12,16 @@ const { Pool } = pgPkg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Render sets PORT automatically; never hardcode it in env
 const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL;
-const SESSION_SECRET = process.env.SESSION_SECRET; // wird hier nur für später gebraucht (optional)
+const SESSION_SECRET = process.env.SESSION_SECRET;
 const TRUST_PROXY = String(process.env.TRUST_PROXY || "0") === "1";
 
 if (!DATABASE_URL) throw new Error("Missing env DATABASE_URL");
 if (!SESSION_SECRET) throw new Error("Missing env SESSION_SECRET");
 
-const isSupabase = /supabase\.com|pooler/i.test(DATABASE_URL);
-
-// --- DB
+// --- DB (Supabase pooler often needs ssl with rejectUnauthorized false)
 function stripQuery(urlString) {
   try {
     const u = new URL(urlString);
@@ -32,6 +31,7 @@ function stripQuery(urlString) {
     return urlString;
   }
 }
+const isSupabase = /supabase\.com|pooler/i.test(DATABASE_URL);
 
 const pool = new Pool({
   connectionString: stripQuery(DATABASE_URL),
@@ -45,39 +45,34 @@ async function q(text, params = []) {
   return pool.query(text, params);
 }
 
-// --- Helpers
-const USERNAME_RE = /^[a-z0-9]+$/i; // nur buchstaben + zahlen
+// --- App rules (your choices)
+const USERNAME_RE = /^[a-z0-9]+$/i;
 const USERNAME_MAX = 10;
 const MSG_MAX = 100;
 
+// Basic parsers
 function now() {
   return new Date();
 }
-
 function safeText(s, max) {
   return String(s ?? "").trim().slice(0, max);
 }
-
-function normUsername(u) {
-  return safeText(u, 100).toLowerCase();
-}
-
-function validUsername(u) {
-  if (!u) return false;
-  if (u.length < 3 || u.length > USERNAME_MAX) return false;
-  return USERNAME_RE.test(u);
-}
-
-function validPassword(p) {
-  return typeof p === "string" && p.length >= 8 && p.length <= 128;
-}
-
 function safeSlug(s) {
   const x = String(s || "").trim().toLowerCase();
   const cleaned = x.replace(/[^a-z0-9_-]/g, "").slice(0, 32);
   return cleaned || "lobby";
 }
-
+function normUsername(u) {
+  return safeText(u, 100).toLowerCase();
+}
+function validUsername(u) {
+  if (!u) return false;
+  if (u.length < 3 || u.length > USERNAME_MAX) return false;
+  return USERNAME_RE.test(u);
+}
+function validPassword(p) {
+  return typeof p === "string" && p.length >= 8 && p.length <= 128;
+}
 function parseCookies(cookieHeader = "") {
   const out = {};
   cookieHeader.split(";").forEach((part) => {
@@ -89,7 +84,6 @@ function parseCookies(cookieHeader = "") {
   });
   return out;
 }
-
 function cookieStr(name, value, opts = {}) {
   const parts = [`${name}=${encodeURIComponent(value)}`];
   if (opts.maxAge != null) parts.push(`Max-Age=${Math.floor(opts.maxAge)}`);
@@ -100,89 +94,44 @@ function cookieStr(name, value, opts = {}) {
   return parts.join("; ");
 }
 
-// --- Security/Rate limits (in-memory)
-const msgWindow = new Map(); // userId -> timestamps[]
-const roomSwitchWindow = new Map();
+// --- In-memory rate limits (simple but effective)
+const msgWindow = new Map();       // userId -> timestamps[]
+const switchWindow = new Map();    // userId -> timestamps[]
 
 function allowAction(map, userId, limit, windowMs) {
   const t = Date.now();
   const arr = map.get(userId) || [];
-  const filtered = arr.filter((x) => t - x < windowMs);
-  if (filtered.length >= limit) {
-    map.set(userId, filtered);
+  const keep = arr.filter((x) => t - x < windowMs);
+  if (keep.length >= limit) {
+    map.set(userId, keep);
     return false;
   }
-  filtered.push(t);
-  map.set(userId, filtered);
+  keep.push(t);
+  map.set(userId, keep);
   return true;
 }
 
-// --- Session storage in your `user_sessions` table
+// --- Sessions stored in DB (user_sessions)
 const SESSION_COOKIE = "sid";
 const SESSION_DAYS = 14;
 
-async function createSession(user) {
+async function createSessionForUser(userId) {
+  const r = await q(`SELECT id, session_version FROM users WHERE id=$1 LIMIT 1`, [userId]);
+  const u = r.rows[0];
+  if (!u) throw new Error("user_not_found");
+
   const expires = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
-  const r = await q(
+  const ins = await q(
     `INSERT INTO user_sessions (user_id, session_version, expires_at)
      VALUES ($1, $2, $3)
      RETURNING id;`,
-    [user.id, user.session_version, expires]
+    [userId, Number(u.session_version), expires]
   );
-  return { id: r.rows[0].id, expires };
+  return { sid: ins.rows[0].id, expires };
 }
 
-async function getSessionUserFromRequest(req) {
-  const cookies = parseCookies(req.headers.cookie || "");
-  const sid = cookies[SESSION_COOKIE];
-  if (!sid) return null;
-
-  const r = await q(
-    `SELECT s.id as sid, s.expires_at,
-            u.id, u.username, u.role, u.bio, u.avatar_url, u.status,
-            u.banned_until, u.muted_until, u.timeout_until,
-            u.session_version
-     FROM user_sessions s
-     JOIN users u ON u.id = s.user_id
-     WHERE s.id = $1
-     LIMIT 1;`,
-    [sid]
-  );
-
-  if (!r.rows[0]) return null;
-
-  const row = r.rows[0];
-  if (row.expires_at && new Date(row.expires_at) <= now()) return null;
-  if (Number(row.session_version) !== Number(row.session_version)) return null; // noop safety
-  // also ensure session_version still matches user:
-  // (if user changed password & session_version increments, old sessions should die)
-  const sv = Number(row.session_version);
-  const rr = await q(`SELECT session_version FROM users WHERE id=$1`, [row.id]);
-  // Actually row.id is user id in select, so:
-  const rr2 = await q(`SELECT session_version FROM users WHERE id=$1`, [row.id]);
-  if (rr2.rows[0] && Number(rr2.rows[0].session_version) !== sv) return null;
-
-  return {
-    sid,
-    user: {
-      id: row.id,
-      username: row.username,
-      role: row.role,
-      bio: row.bio,
-      avatar_url: row.avatar_url,
-      status: row.status,
-      banned_until: row.banned_until,
-      muted_until: row.muted_until,
-      timeout_until: row.timeout_until,
-      session_version: sv
-    }
-  };
-}
-
-// Fix: The above double-query is ugly; implement proper in one go:
 async function getSessionUser(sid) {
   if (!sid) return null;
-
   const r = await q(
     `SELECT s.id as sid, s.expires_at, s.session_version as sver,
             u.id, u.username, u.role, u.bio, u.avatar_url, u.status,
@@ -194,8 +143,8 @@ async function getSessionUser(sid) {
      LIMIT 1;`,
     [sid]
   );
-
   if (!r.rows[0]) return null;
+
   const row = r.rows[0];
   if (row.expires_at && new Date(row.expires_at) <= now()) return null;
   if (Number(row.sver) !== Number(row.uver)) return null;
@@ -232,8 +181,9 @@ function isActiveTimeout(user) {
   return user?.timeout_until && new Date(user.timeout_until) > now();
 }
 
-// --- Rooms cache
-const roomCache = new Map(); // slug -> {id, admin_only, visibility, join_code, is_locked}
+// --- Rooms cache + defaults
+const roomCache = new Map(); // slug -> room row
+
 async function getRoomBySlug(slug) {
   const key = safeSlug(slug);
   if (roomCache.has(key)) return roomCache.get(key);
@@ -265,7 +215,6 @@ async function ensureDefaultRooms() {
   roomCache.clear();
 }
 
-// --- Membership
 async function ensureMember(roomId, userId, role = "member") {
   await q(
     `INSERT INTO room_members (room_id, user_id, role)
@@ -275,7 +224,6 @@ async function ensureMember(roomId, userId, role = "member") {
   );
 }
 
-// --- Moderation logs
 async function modLog({ byAdmin, action, targetUser = null, targetRoom = null, details = null }) {
   await q(
     `INSERT INTO moderation_logs (by_admin, action, target_user, target_room, details)
@@ -292,11 +240,10 @@ app.use(helmet());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// Static /public
 app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"] }));
 app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
-async function authMiddleware(req, res, next) {
+async function authMiddleware(req, _res, next) {
   try {
     const cookies = parseCookies(req.headers.cookie || "");
     const sid = cookies[SESSION_COOKIE];
@@ -306,14 +253,9 @@ async function authMiddleware(req, res, next) {
       return next();
     }
     const sess = await getSessionUser(sid);
-    if (!sess) {
-      req.user = null;
-      req.sid = sid;
-      return next();
-    }
-    req.user = sess.user;
-    req.sid = sess.sid;
-    return next();
+    req.user = sess?.user || null;
+    req.sid = sess?.sid || sid;
+    next();
   } catch (e) {
     console.error("authMiddleware error", e);
     req.user = null;
@@ -336,14 +278,13 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// --- API
-app.get("/api/me", (req, res) => {
-  res.json({ ok: true, user: req.user || null });
-});
+// --- API: Auth
+app.get("/api/me", (req, res) => res.json({ ok: true, user: req.user || null }));
 
 app.post("/api/register", async (req, res) => {
   try {
-    const username = normUsername(req.body.username);
+    const usernameRaw = String(req.body.username || "");
+    const username = normUsername(usernameRaw);
     const password = String(req.body.password || "");
 
     if (!validUsername(username)) return res.status(400).json({ ok: false, error: "bad_username" });
@@ -359,14 +300,13 @@ app.post("/api/register", async (req, res) => {
     );
 
     const user = r.rows[0];
-    const sess = await createSession(user);
+    const sess = await createSessionForUser(user.id);
 
-    const secure = true; // Render ist https
     res.setHeader(
       "Set-Cookie",
-      cookieStr(SESSION_COOKIE, sess.id, {
+      cookieStr(SESSION_COOKIE, sess.sid, {
         httpOnly: true,
-        secure,
+        secure: true,
         sameSite: "Lax",
         path: "/",
         maxAge: SESSION_DAYS * 24 * 60 * 60
@@ -416,14 +356,13 @@ app.post("/api/login", async (req, res) => {
 
     if (isActiveBan(user)) return res.status(403).json({ ok: false, error: "banned", until: user.banned_until });
 
-    const sess = await createSession(user);
+    const sess = await createSessionForUser(user.id);
 
-    const secure = true;
     res.setHeader(
       "Set-Cookie",
-      cookieStr(SESSION_COOKIE, sess.id, {
+      cookieStr(SESSION_COOKIE, sess.sid, {
         httpOnly: true,
-        secure,
+        secure: true,
         sameSite: "Lax",
         path: "/",
         maxAge: SESSION_DAYS * 24 * 60 * 60
@@ -457,23 +396,12 @@ app.post("/api/logout", requireAuth, async (req, res) => {
   }
 });
 
+// --- API: Rooms & messages
 app.get("/api/rooms", requireAuth, async (req, res) => {
   try {
-    let r;
-    if (req.user.role === "admin") {
-      r = await q(
-        `SELECT id, slug, title, description, visibility, kind, is_locked, admin_only
-         FROM rooms
-         ORDER BY slug ASC;`
-      );
-    } else {
-      r = await q(
-        `SELECT id, slug, title, description, visibility, kind, is_locked, admin_only
-         FROM rooms
-         WHERE admin_only = false
-         ORDER BY slug ASC;`
-      );
-    }
+    const r = req.user.role === "admin"
+      ? await q(`SELECT id, slug, title, description, visibility, kind, is_locked, admin_only FROM rooms ORDER BY slug ASC;`)
+      : await q(`SELECT id, slug, title, description, visibility, kind, is_locked, admin_only FROM rooms WHERE admin_only=false ORDER BY slug ASC;`);
     res.json({ ok: true, rooms: r.rows });
   } catch (e) {
     console.error("rooms error", e);
@@ -481,22 +409,17 @@ app.get("/api/rooms", requireAuth, async (req, res) => {
   }
 });
 
-// Join room (private rooms: join_code needed)
 app.post("/api/rooms/:slug/join", requireAuth, async (req, res) => {
   try {
     const slug = safeSlug(req.params.slug);
     const room = await getRoomBySlug(slug);
     if (!room) return res.status(404).json({ ok: false, error: "room_not_found" });
 
-    if (room.admin_only && req.user.role !== "admin") {
-      return res.status(403).json({ ok: false, error: "admin_room" });
-    }
+    if (room.admin_only && req.user.role !== "admin") return res.status(403).json({ ok: false, error: "admin_room" });
 
     if (room.visibility === "private") {
       const code = safeText(req.body.join_code, 64);
-      if (!room.join_code || code !== room.join_code) {
-        return res.status(403).json({ ok: false, error: "bad_join_code" });
-      }
+      if (!room.join_code || code !== room.join_code) return res.status(403).json({ ok: false, error: "bad_join_code" });
     }
 
     await ensureMember(room.id, req.user.id, req.user.role === "admin" ? "admin" : "member");
@@ -507,18 +430,15 @@ app.post("/api/rooms/:slug/join", requireAuth, async (req, res) => {
   }
 });
 
-// Fetch messages
 app.get("/api/rooms/:slug/messages", requireAuth, async (req, res) => {
   try {
     const slug = safeSlug(req.params.slug);
     const room = await getRoomBySlug(slug);
     if (!room) return res.status(404).json({ ok: false, error: "room_not_found" });
-
-    if (room.admin_only && req.user.role !== "admin") {
-      return res.status(403).json({ ok: false, error: "admin_room" });
-    }
+    if (room.admin_only && req.user.role !== "admin") return res.status(403).json({ ok: false, error: "admin_room" });
 
     const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
+
     const r = await q(
       `SELECT m.id, m.created_at, m.type, m.content, m.is_deleted,
               u.username AS author, u.role AS author_role
@@ -537,19 +457,12 @@ app.get("/api/rooms/:slug/messages", requireAuth, async (req, res) => {
   }
 });
 
-// Delete message (owner OR admin)
 app.delete("/api/messages/:id", requireAuth, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ ok: false, error: "bad_id" });
 
-    const r = await q(
-      `SELECT id, room_id, author_id, is_deleted
-       FROM messages
-       WHERE id=$1
-       LIMIT 1;`,
-      [id]
-    );
+    const r = await q(`SELECT id, room_id, author_id, is_deleted FROM messages WHERE id=$1 LIMIT 1;`, [id]);
     const msg = r.rows[0];
     if (!msg) return res.status(404).json({ ok: false, error: "not_found" });
     if (msg.is_deleted) return res.json({ ok: true });
@@ -565,14 +478,54 @@ app.delete("/api/messages/:id", requireAuth, async (req, res) => {
       [req.user.id, id]
     );
 
-    res.json({ ok: true, room_id: msg.room_id, id });
+    res.json({ ok: true });
   } catch (e) {
     console.error("delete message error", e);
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
 
-// Admin punish (ban/mute/timeout)
+// --- ADMIN API (Panel uses these)
+app.get("/api/admin/users", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const r = await q(
+      `SELECT id, username, role, status, bio, avatar_url,
+              banned_until, muted_until, timeout_until, created_at
+       FROM users
+       ORDER BY id ASC
+       LIMIT 300;`
+    );
+    res.json({ ok: true, users: r.rows });
+  } catch (e) {
+    console.error("admin users error", e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+app.get("/api/admin/logs", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(300, Math.max(1, Number(req.query.limit || 120)));
+    const r = await q(
+      `SELECT l.id, l.created_at, l.action, l.details,
+              a.username AS by_admin_name,
+              tu.username AS target_user_name,
+              tr.slug AS target_room_slug
+       FROM moderation_logs l
+       LEFT JOIN users a ON a.id = l.by_admin
+       LEFT JOIN users tu ON tu.id = l.target_user
+       LEFT JOIN rooms tr ON tr.id = l.target_room
+       ORDER BY l.id DESC
+       LIMIT $1;`,
+      [limit]
+    );
+    res.json({ ok: true, logs: r.rows });
+  } catch (e) {
+    console.error("admin logs error", e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// Ban/Mute/Timeout (already used by your UI later)
 app.post("/api/admin/punish", requireAuth, requireAdmin, async (req, res) => {
   try {
     const username = normUsername(req.body.username);
@@ -590,13 +543,9 @@ app.post("/api/admin/punish", requireAuth, requireAdmin, async (req, res) => {
 
     const untilAt = new Date(Date.now() + minutes * 60 * 1000);
 
-    if (kind === "ban") {
-      await q(`UPDATE users SET banned_until=$1 WHERE id=$2;`, [untilAt, target.id]);
-    } else if (kind === "mute") {
-      await q(`UPDATE users SET muted_until=$1 WHERE id=$2;`, [untilAt, target.id]);
-    } else {
-      await q(`UPDATE users SET timeout_until=$1 WHERE id=$2;`, [untilAt, target.id]);
-    }
+    if (kind === "ban") await q(`UPDATE users SET banned_until=$1 WHERE id=$2;`, [untilAt, target.id]);
+    if (kind === "mute") await q(`UPDATE users SET muted_until=$1 WHERE id=$2;`, [untilAt, target.id]);
+    if (kind === "timeout") await q(`UPDATE users SET timeout_until=$1 WHERE id=$2;`, [untilAt, target.id]);
 
     await q(
       `INSERT INTO punishments (user_id, by_admin, kind, until_at, reason)
@@ -611,6 +560,9 @@ app.post("/api/admin/punish", requireAuth, requireAdmin, async (req, res) => {
       details: { minutes, reason }
     });
 
+    // Notify target live (optional)
+    notifyUser(target.id, "punished", { kind, until_at: untilAt, reason });
+
     res.json({ ok: true, until_at: untilAt });
   } catch (e) {
     console.error("admin punish error", e);
@@ -618,33 +570,140 @@ app.post("/api/admin/punish", requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// Admin create room (public/private/admin)
-app.post("/api/admin/rooms", requireAuth, requireAdmin, async (req, res) => {
+// System message in a room
+app.post("/api/admin/system", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const slug = safeSlug(req.body.slug);
-    const title = safeText(req.body.title || slug, 40);
-    const description = safeText(req.body.description, 120);
-    const visibility = String(req.body.visibility || "public").toLowerCase(); // public|private
-    const adminOnly = Boolean(req.body.admin_only);
-    const joinCode = safeText(req.body.join_code, 64);
+    const slug = safeSlug(req.body.room || "lobby");
+    const text = safeText(req.body.text, 200);
+    if (!text) return res.status(400).json({ ok: false, error: "empty" });
 
-    if (!slug) return res.status(400).json({ ok: false, error: "bad_slug" });
-    if (!title) return res.status(400).json({ ok: false, error: "bad_title" });
-    if (!["public", "private"].includes(visibility)) return res.status(400).json({ ok: false, error: "bad_visibility" });
+    const room = await getRoomBySlug(slug);
+    if (!room) return res.status(404).json({ ok: false, error: "room_not_found" });
+    if (room.admin_only && req.user.role !== "admin") return res.status(403).json({ ok: false, error: "admin_room" });
 
-    await q(
-      `INSERT INTO rooms (slug, title, description, visibility, kind, created_by, join_code, is_locked, admin_only)
-       VALUES ($1,$2,$3,$4,'room',$5,$6,false,$7)
-       ON CONFLICT (slug) DO NOTHING;`,
-      [slug, title, description || null, visibility, req.user.id, visibility === "private" ? (joinCode || null) : null, adminOnly]
+    const ins = await q(
+      `INSERT INTO messages (room_id, author_id, type, content)
+       VALUES ($1, NULL, 'system', $2)
+       RETURNING id, created_at;`,
+      [room.id, text]
     );
 
-    roomCache.clear();
-    await modLog({ byAdmin: req.user.id, action: "ROOM_CREATE", details: { slug, visibility, adminOnly } });
+    const msg = {
+      id: ins.rows[0].id,
+      created_at: ins.rows[0].created_at,
+      type: "system",
+      content: text,
+      author: null,
+      author_role: null,
+      is_deleted: false
+    };
 
-    res.json({ ok: true, slug });
+    io.to(room.slug).emit("message", msg);
+
+    await modLog({ byAdmin: req.user.id, action: "SYSTEM_MESSAGE", targetRoom: room.id, details: { text } });
+
+    res.json({ ok: true });
   } catch (e) {
-    console.error("admin create room error", e);
+    console.error("admin system error", e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// Force-move a user into another room (client must handle "force_move" event)
+app.post("/api/admin/force-move", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const username = normUsername(req.body.username);
+    const slug = safeSlug(req.body.room);
+    const join_code = safeText(req.body.join_code, 64);
+
+    if (!validUsername(username)) return res.status(400).json({ ok: false, error: "bad_username" });
+
+    const ur = await q(`SELECT id, role FROM users WHERE username=$1 LIMIT 1;`, [username]);
+    const target = ur.rows[0];
+    if (!target) return res.status(404).json({ ok: false, error: "user_not_found" });
+
+    const room = await getRoomBySlug(slug);
+    if (!room) return res.status(404).json({ ok: false, error: "room_not_found" });
+    if (room.admin_only && target.role !== "admin") return res.status(400).json({ ok: false, error: "target_not_admin" });
+
+    if (room.visibility === "private") {
+      if (!room.join_code || join_code !== room.join_code) return res.status(403).json({ ok: false, error: "bad_join_code" });
+    }
+
+    notifyUser(target.id, "force_move", { room: room.slug, join_code: room.visibility === "private" ? join_code : null });
+
+    await modLog({
+      byAdmin: req.user.id,
+      action: "FORCE_MOVE",
+      targetUser: target.id,
+      targetRoom: room.id,
+      details: { room: room.slug }
+    });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("admin force-move error", e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// Bots (minimal: create/list/toggle)
+app.get("/api/admin/bots", requireAuth, requireAdmin, async (_req, res) => {
+  try {
+    const r = await q(
+      `SELECT b.id, b.created_at, b.name, b.room_id, b.enabled, b.config,
+              r.slug AS room_slug
+       FROM bots b
+       LEFT JOIN rooms r ON r.id = b.room_id
+       ORDER BY b.id DESC
+       LIMIT 300;`
+    );
+    res.json({ ok: true, bots: r.rows });
+  } catch (e) {
+    console.error("admin bots list error", e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+app.post("/api/admin/bots/create", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const name = safeText(req.body.name, 30);
+    const roomSlug = safeSlug(req.body.room || "lobby");
+    const config = req.body.config && typeof req.body.config === "object" ? req.body.config : {};
+
+    if (!name) return res.status(400).json({ ok: false, error: "bad_name" });
+
+    const room = await getRoomBySlug(roomSlug);
+    if (!room) return res.status(404).json({ ok: false, error: "room_not_found" });
+    if (room.admin_only && req.user.role !== "admin") return res.status(403).json({ ok: false, error: "admin_room" });
+
+    const ins = await q(
+      `INSERT INTO bots (name, room_id, enabled, config)
+       VALUES ($1,$2,true,$3)
+       RETURNING id;`,
+      [name, room.id, config]
+    );
+
+    await modLog({ byAdmin: req.user.id, action: "BOT_CREATE", targetRoom: room.id, details: { name } });
+    res.json({ ok: true, id: ins.rows[0].id });
+  } catch (e) {
+    console.error("admin bots create error", e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+app.post("/api/admin/bots/toggle", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.body.id);
+    const enabled = Boolean(req.body.enabled);
+    if (!Number.isFinite(id)) return res.status(400).json({ ok: false, error: "bad_id" });
+
+    await q(`UPDATE bots SET enabled=$1 WHERE id=$2`, [enabled, id]);
+    await modLog({ byAdmin: req.user.id, action: "BOT_TOGGLE", details: { id, enabled } });
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("admin bots toggle error", e);
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
@@ -667,6 +726,15 @@ function trackSocket(userId, socket) {
     if (s.size === 0) userSockets.delete(userId);
   });
 }
+function notifyUser(userId, event, payload) {
+  const set = userSockets.get(Number(userId));
+  if (!set) return;
+  for (const s of set) {
+    try {
+      s.emit(event, payload);
+    } catch {}
+  }
+}
 
 io.use(async (socket, next) => {
   try {
@@ -683,13 +751,12 @@ io.use(async (socket, next) => {
     socket.sid = sid;
     trackSocket(sess.user.id, socket);
     next();
-  } catch (e) {
+  } catch {
     next(new Error("auth_error"));
   }
 });
 
 io.on("connection", (socket) => {
-  // join lobby by default
   socket.join("lobby");
   socket.emit("hello", { ok: true, user: socket.user, room: "lobby" });
 
@@ -697,7 +764,7 @@ io.on("connection", (socket) => {
     try {
       const slug = safeSlug(payload?.slug || payload?.room || "lobby");
 
-      if (!allowAction(roomSwitchWindow, socket.user.id, 8, 10_000)) {
+      if (!allowAction(switchWindow, socket.user.id, 8, 10_000)) {
         return cb?.({ ok: false, error: "rate_limited" });
       }
 
@@ -715,7 +782,6 @@ io.on("connection", (socket) => {
         }
       }
 
-      // leave all rooms (except own socket room)
       for (const r of socket.rooms) {
         if (r !== socket.id) socket.leave(r);
       }
@@ -724,27 +790,8 @@ io.on("connection", (socket) => {
 
       await ensureMember(room.id, socket.user.id, socket.user.role === "admin" ? "admin" : "member");
 
-      // system message (optional)
-      const sys = `${socket.user.username} joined`;
-      const ins = await q(
-        `INSERT INTO messages (room_id, author_id, type, content)
-         VALUES ($1, NULL, 'system', $2)
-         RETURNING id, created_at;`,
-        [room.id, sys]
-      );
-
-      io.to(slug).emit("message", {
-        id: ins.rows[0].id,
-        created_at: ins.rows[0].created_at,
-        type: "system",
-        content: sys,
-        author: null,
-        author_role: null,
-        is_deleted: false
-      });
-
       cb?.({ ok: true, room: { slug: room.slug, title: room.title } });
-    } catch (e) {
+    } catch {
       cb?.({ ok: false, error: "server_error" });
     }
   });
@@ -754,9 +801,8 @@ io.on("connection", (socket) => {
       if (isActiveTimeout(socket.user)) return cb?.({ ok: false, error: "timeout" });
       if (isActiveMute(socket.user)) return cb?.({ ok: false, error: "muted" });
 
-      if (!allowAction(msgWindow, socket.user.id, 5, 3000)) {
-        return cb?.({ ok: false, error: "rate_limited" });
-      }
+      // rate limit: 5 messages / 3s
+      if (!allowAction(msgWindow, socket.user.id, 5, 3000)) return cb?.({ ok: false, error: "rate_limited" });
 
       const slug = safeSlug(payload?.room || "lobby");
       const text = safeText(payload?.text, MSG_MAX);
@@ -767,13 +813,10 @@ io.on("connection", (socket) => {
       const room = await getRoomBySlug(slug);
       if (!room) return cb?.({ ok: false, error: "room_not_found" });
 
-      if (room.admin_only && socket.user.role !== "admin") {
-        return cb?.({ ok: false, error: "admin_room" });
-      }
+      if (room.admin_only && socket.user.role !== "admin") return cb?.({ ok: false, error: "admin_room" });
 
+      // private rooms: must be a member (joined through /join)
       if (room.visibility === "private") {
-        // private rooms require membership or correct join_code via /join; keep it simple:
-        // allow only if member exists
         const mr = await q(
           `SELECT 1 FROM room_members WHERE room_id=$1 AND user_id=$2 LIMIT 1;`,
           [room.id, socket.user.id]
@@ -804,8 +847,9 @@ io.on("connection", (socket) => {
       };
 
       io.to(slug).emit("message", msg);
+
       cb?.({ ok: true, id: msg.id });
-    } catch (e) {
+    } catch {
       cb?.({ ok: false, error: "server_error" });
     }
   });
@@ -815,13 +859,7 @@ io.on("connection", (socket) => {
       const id = Number(payload?.id);
       if (!Number.isFinite(id)) return cb?.({ ok: false, error: "bad_id" });
 
-      const r = await q(
-        `SELECT id, room_id, author_id, is_deleted
-         FROM messages
-         WHERE id=$1
-         LIMIT 1;`,
-        [id]
-      );
+      const r = await q(`SELECT id, room_id, author_id, is_deleted FROM messages WHERE id=$1 LIMIT 1;`, [id]);
       const msg = r.rows[0];
       if (!msg) return cb?.({ ok: false, error: "not_found" });
       if (msg.is_deleted) return cb?.({ ok: true });
@@ -837,13 +875,12 @@ io.on("connection", (socket) => {
         [socket.user.id, id]
       );
 
-      // find room slug from cache (or query)
       const rr = await q(`SELECT slug FROM rooms WHERE id=$1 LIMIT 1;`, [msg.room_id]);
       const slug = rr.rows[0]?.slug || "lobby";
-
       io.to(slug).emit("message_deleted", { id });
+
       cb?.({ ok: true });
-    } catch (e) {
+    } catch {
       cb?.({ ok: false, error: "server_error" });
     }
   });
@@ -861,7 +898,6 @@ server.listen(PORT, async () => {
   }
 });
 
-// graceful shutdown
 process.on("SIGTERM", async () => {
   try {
     await pool.end();

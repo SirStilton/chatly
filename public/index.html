@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Chatly</title>
   <link rel="stylesheet" href="./style.css" />
 </head>
@@ -12,7 +12,7 @@
   <header class="topbar">
     <div class="brand">
       <div class="dot"></div>
-      <div>
+      <div class="brandText">
         <div class="title">Chatly</div>
         <div class="sub" id="statusText">offline</div>
       </div>
@@ -20,45 +20,50 @@
 
     <div class="right">
       <div class="pill" id="mePill">nicht angemeldet</div>
+      <button class="btn ghost" id="btnAdmin" style="display:none;">Admin</button>
       <button class="btn ghost" id="btnLogout" style="display:none;">Logout</button>
+      <button class="btn ghost icon" id="btnMobileMenu" aria-label="Menü" title="Menü">☰</button>
     </div>
   </header>
 
   <main class="grid">
+    <!-- AUTH -->
     <section class="card auth" id="authCard">
       <h2>Anmelden</h2>
-      <p class="hint">Keine E-Mail. Username max 10 Zeichen.</p>
+      <p class="hint">Keine E-Mail. Username max 10 Zeichen (Buchstaben + Zahlen).</p>
 
       <div class="tabs">
-        <button class="tab active" id="tabLogin">Login</button>
-        <button class="tab" id="tabRegister">Registrieren</button>
+        <button class="tab active" id="tabLogin" type="button">Login</button>
+        <button class="tab" id="tabRegister" type="button">Registrieren</button>
       </div>
 
-      <form id="loginForm" class="form">
-        <label>Username</label>
-        <input id="loginUser" maxlength="10" autocomplete="username" placeholder="z.B. CyberFox" />
-        <label>Passwort</label>
+      <form id="loginForm" class="form" autocomplete="on">
+        <label for="loginUser">Username</label>
+        <input id="loginUser" maxlength="10" autocomplete="username" placeholder="z.B. cyberfox" />
+        <label for="loginPass">Passwort</label>
         <input id="loginPass" type="password" autocomplete="current-password" placeholder="mind. 8 Zeichen" />
         <button class="btn" type="submit">Login</button>
         <div class="msg" id="loginMsg"></div>
       </form>
 
-      <form id="registerForm" class="form" style="display:none;">
-        <label>Username</label>
+      <form id="registerForm" class="form" style="display:none;" autocomplete="on">
+        <label for="regUser">Username</label>
         <input id="regUser" maxlength="10" autocomplete="username" placeholder="nur Buchstaben + Zahlen" />
-        <label>Passwort</label>
+        <label for="regPass">Passwort</label>
         <input id="regPass" type="password" autocomplete="new-password" placeholder="mind. 8 Zeichen" />
         <button class="btn" type="submit">Account erstellen</button>
         <div class="msg" id="regMsg"></div>
       </form>
     </section>
 
+    <!-- APP -->
     <section class="card app" id="appCard" style="display:none;">
-      <aside class="sidebar">
+      <aside class="sidebar" id="sidebar">
         <div class="sideTop">
           <div class="sideTitle">Räume</div>
-          <button class="btn ghost small" id="btnRefreshRooms">refresh</button>
+          <button class="btn ghost small" id="btnRefreshRooms" type="button">refresh</button>
         </div>
+
         <div class="rooms" id="rooms"></div>
 
         <div class="sideBottom">
@@ -70,12 +75,16 @@
             <span class="k">Realtime</span>
             <span class="v" id="rtText">Socket.IO</span>
           </div>
+          <div class="mini">
+            <span class="k">Room</span>
+            <span class="v" id="roomPillMini">#lobby</span>
+          </div>
         </div>
       </aside>
 
       <section class="chat">
         <div class="chatHead">
-          <div>
+          <div class="chatHeadLeft">
             <div class="roomTitle" id="roomTitle">Lobby</div>
             <div class="roomSub" id="roomSub">Allgemeiner Chat</div>
           </div>
@@ -84,7 +93,7 @@
           </div>
         </div>
 
-        <div class="msgs" id="msgs"></div>
+        <div class="msgs" id="msgs" aria-live="polite"></div>
 
         <div class="composer">
           <input id="msgInput" maxlength="100" placeholder="Nachricht (max 100 Zeichen)..." />
@@ -92,13 +101,142 @@
             <input type="checkbox" id="sendHtml" />
             <span>als HTML</span>
           </label>
-          <button class="btn" id="btnSend">Senden</button>
+          <button class="btn" id="btnSend" type="button">Senden</button>
         </div>
 
         <div class="footmsg" id="footMsg"></div>
       </section>
     </section>
   </main>
+
+  <!-- MOBILE OVERLAY (rooms) -->
+  <div class="overlay" id="mobileOverlay" style="display:none;">
+    <div class="overlayBackdrop" id="mobileBackdrop"></div>
+    <div class="overlayPanel">
+      <div class="overlayHead">
+        <div class="overlayTitle">Räume</div>
+        <button class="btn ghost small" id="btnMobileClose" type="button">close</button>
+      </div>
+      <div class="overlayBody">
+        <div class="rooms" id="roomsMobile"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ADMIN PANEL OVERLAY -->
+  <div class="overlay" id="adminOverlay" style="display:none;">
+    <div class="overlayBackdrop" id="adminBackdrop"></div>
+    <div class="overlayPanel adminPanel">
+      <div class="overlayHead">
+        <div class="overlayTitle">Admin Panel</div>
+        <button class="btn ghost small" id="btnAdminClose" type="button">close</button>
+      </div>
+
+      <div class="adminTabs" role="tablist" aria-label="Admin Tabs">
+        <button class="adminTab active" id="admTabUsers" type="button" role="tab">Users</button>
+        <button class="adminTab" id="admTabSystem" type="button" role="tab">System</button>
+        <button class="adminTab" id="admTabMove" type="button" role="tab">Move</button>
+        <button class="adminTab" id="admTabBots" type="button" role="tab">Bots</button>
+        <button class="adminTab" id="admTabLogs" type="button" role="tab">Logs</button>
+      </div>
+
+      <div class="overlayBody adminBody">
+        <!-- USERS -->
+        <section class="admSection" id="admUsers">
+          <div class="admRow">
+            <input id="admUserSearch" placeholder="User suchen…" maxlength="20" />
+            <button class="btn ghost small" id="admRefreshUsers" type="button">refresh</button>
+          </div>
+
+          <div class="admList" id="admUsersList"></div>
+
+          <div class="admHint" id="admUsersHint"></div>
+
+          <div class="admCard">
+            <div class="admCardTitle">Punish</div>
+            <div class="admRow">
+              <input id="admPunishUser" placeholder="username" maxlength="10" />
+              <select id="admPunishKind">
+                <option value="ban">ban</option>
+                <option value="mute">mute</option>
+                <option value="timeout">timeout</option>
+              </select>
+              <input id="admPunishMinutes" type="number" min="1" max="43200" value="10" />
+            </div>
+            <div class="admRow">
+              <input id="admPunishReason" placeholder="reason (optional)" maxlength="200" />
+              <button class="btn danger" id="admPunishGo" type="button">apply</button>
+            </div>
+            <div class="admHint" id="admPunishMsg"></div>
+          </div>
+        </section>
+
+        <!-- SYSTEM -->
+        <section class="admSection" id="admSystem" style="display:none;">
+          <div class="admCard">
+            <div class="admCardTitle">System Message</div>
+            <div class="admRow">
+              <select id="admSysRoom"></select>
+              <button class="btn ghost small" id="admSysUseCurrent" type="button">current</button>
+            </div>
+            <div class="admRow">
+              <input id="admSysText" placeholder="System Nachricht…" maxlength="200" />
+              <button class="btn" id="admSysSend" type="button">send</button>
+            </div>
+            <div class="admHint" id="admSysMsg"></div>
+          </div>
+        </section>
+
+        <!-- MOVE -->
+        <section class="admSection" id="admMove" style="display:none;">
+          <div class="admCard">
+            <div class="admCardTitle">Force Move</div>
+            <div class="admRow">
+              <input id="admMoveUser" placeholder="username" maxlength="10" />
+              <select id="admMoveRoom"></select>
+            </div>
+            <div class="admRow">
+              <input id="admMoveJoinCode" placeholder="join code (nur private)" maxlength="64" />
+              <button class="btn" id="admMoveGo" type="button">move</button>
+            </div>
+            <div class="admHint" id="admMoveMsg"></div>
+          </div>
+        </section>
+
+        <!-- BOTS -->
+        <section class="admSection" id="admBots" style="display:none;">
+          <div class="admCard">
+            <div class="admCardTitle">Create Bot</div>
+            <div class="admRow">
+              <input id="admBotName" placeholder="Bot Name" maxlength="30" />
+              <select id="admBotRoom"></select>
+            </div>
+            <div class="admRow">
+              <textarea id="admBotConfig" placeholder='config JSON (optional)  e.g. {"mode":"echo"}'></textarea>
+              <button class="btn" id="admBotCreate" type="button">create</button>
+            </div>
+            <div class="admHint" id="admBotMsg"></div>
+          </div>
+
+          <div class="admRow">
+            <div class="admCardTitle" style="margin:0;">Bots</div>
+            <button class="btn ghost small" id="admRefreshBots" type="button">refresh</button>
+          </div>
+
+          <div class="admList" id="admBotsList"></div>
+        </section>
+
+        <!-- LOGS -->
+        <section class="admSection" id="admLogs" style="display:none;">
+          <div class="admRow">
+            <button class="btn ghost small" id="admRefreshLogs" type="button">refresh</button>
+            <div class="admHint" id="admLogsMsg"></div>
+          </div>
+          <div class="admList" id="admLogsList"></div>
+        </section>
+      </div>
+    </div>
+  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="./script.js"></script>

@@ -8,6 +8,7 @@
   --muted: rgba(234,255,242,.65);
   --shadow: 0 10px 30px rgba(0,0,0,.35);
   --r: 18px;
+  --danger: rgba(255, 120, 120, .9);
 }
 
 *{box-sizing:border-box}
@@ -44,13 +45,15 @@ body{
 }
 
 .brand{display:flex; gap:12px; align-items:center}
+.brandText{display:flex; flex-direction:column}
 .dot{
   width:12px;height:12px;border-radius:999px;
   background: var(--g);
   box-shadow: 0 0 22px rgba(60,255,143,.75);
 }
-.title{font-weight:800; letter-spacing:.3px}
+.title{font-weight:900; letter-spacing:.3px}
 .sub{font-size:12px; color:var(--muted)}
+
 .right{display:flex; gap:10px; align-items:center}
 
 .pill{
@@ -60,6 +63,7 @@ body{
   background: rgba(10,25,16,.45);
   color:var(--muted);
   font-size:12px;
+  white-space:nowrap;
 }
 
 .grid{max-width:1100px; margin:22px auto; padding:0 14px}
@@ -71,7 +75,7 @@ body{
   overflow:hidden;
 }
 
-.auth{max-width:420px; margin:30px auto; padding:18px}
+.auth{max-width:440px; margin:30px auto; padding:18px}
 .auth h2{margin:0 0 6px}
 .hint{margin:0 0 14px; color:var(--muted); font-size:13px}
 
@@ -93,7 +97,7 @@ body{
 
 .form{display:flex; flex-direction:column; gap:10px}
 label{font-size:12px; color:var(--muted)}
-input{
+input, select, textarea{
   padding:12px 12px;
   border-radius:12px;
   border:1px solid var(--line);
@@ -101,8 +105,9 @@ input{
   background: rgba(6,17,11,.55);
   color:var(--text);
 }
-input::placeholder{color: rgba(234,255,242,.35)}
-input:focus{
+textarea{min-height:84px; resize:vertical}
+input::placeholder, textarea::placeholder{color: rgba(234,255,242,.35)}
+input:focus, select:focus, textarea:focus{
   border-color: rgba(60,255,143,.45);
   box-shadow: 0 0 18px rgba(60,255,143,.10);
 }
@@ -114,27 +119,33 @@ input:focus{
   background: linear-gradient(180deg, rgba(60,255,143,.22), rgba(0,212,106,.12));
   color:var(--text);
   cursor:pointer;
-  font-weight:700;
+  font-weight:800;
 }
-.btn:hover{filter:brightness(1.05)}
+.btn:hover{filter:brightness(1.06)}
+.btn:active{transform: translateY(1px)}
 .btn.ghost{
   background: rgba(10,25,16,.35);
   border:1px solid var(--line);
   color:var(--muted);
 }
 .btn.small{padding:8px 10px; border-radius:10px; font-size:12px}
+.btn.icon{display:none; padding:10px 12px; border-radius:12px; font-size:14px; line-height:1}
+.btn.danger{
+  border:1px solid rgba(255,120,120,.35);
+  background: linear-gradient(180deg, rgba(255,120,120,.20), rgba(255,120,120,.08));
+}
 
 .msg{min-height:18px; font-size:12px; color: rgba(255,210,210,.9)}
 .msg.ok{color: rgba(180,255,210,.9)}
 
-.app{display:grid; grid-template-columns: 260px 1fr; min-height:74vh}
+.app{display:grid; grid-template-columns: 270px 1fr; min-height:74vh}
 .sidebar{border-right:1px solid var(--line); display:flex; flex-direction:column}
 .sideTop{
   display:flex; justify-content:space-between; align-items:center;
   padding:14px 14px 10px;
   border-bottom:1px solid var(--line);
 }
-.sideTitle{font-weight:800}
+.sideTitle{font-weight:900}
 .rooms{padding:10px; display:flex; flex-direction:column; gap:8px}
 .roomBtn{
   text-align:left;
@@ -150,7 +161,7 @@ input:focus{
   border-color: rgba(60,255,143,.55);
   box-shadow: 0 0 18px rgba(60,255,143,.12);
 }
-.roomMeta{display:flex; justify-content:space-between; margin-top:4px; color:var(--muted); font-size:11px}
+.roomMeta{display:flex; justify-content:space-between; gap:10px; margin-top:4px; color:var(--muted); font-size:11px}
 .badge{
   font-size:10px;
   padding:2px 7px;
@@ -158,27 +169,29 @@ input:focus{
   border:1px solid rgba(60,255,143,.25);
   background: rgba(60,255,143,.08);
   color: rgba(220,255,235,.85);
+  flex:0 0 auto;
 }
 .badge.admin{border-color: rgba(255,110,110,.25); background: rgba(255,110,110,.08)}
-
 .sideBottom{
   margin-top:auto;
   padding:12px 14px;
   border-top:1px solid var(--line);
   display:flex; flex-direction:column; gap:6px;
 }
-.mini{display:flex; justify-content:space-between; font-size:12px}
+.mini{display:flex; justify-content:space-between; gap:10px; font-size:12px}
 .mini .k{color:var(--muted)}
 .mini .v{color:rgba(220,255,235,.9)}
 
-.chat{display:flex; flex-direction:column}
+.chat{display:flex; flex-direction:column; min-width:0}
 .chatHead{
   padding:14px 16px;
   border-bottom:1px solid var(--line);
   display:flex; justify-content:space-between; align-items:center;
+  gap:12px;
 }
+.chatHeadLeft{min-width:0}
 .roomTitle{font-weight:900}
-.roomSub{font-size:12px; color:var(--muted)}
+.roomSub{font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60vw}
 
 .msgs{
   padding:14px 16px;
@@ -188,6 +201,7 @@ input:focus{
   flex-direction:column;
   gap:10px;
 }
+
 .bubble{
   border:1px solid var(--line);
   background: rgba(6,17,11,.45);
@@ -195,11 +209,13 @@ input:focus{
   padding:10px 12px;
   max-width:min(720px, 100%);
 }
+
 .rowTop{display:flex; gap:10px; align-items:center; justify-content:space-between}
-.author{font-weight:800; font-size:12px}
+.author{font-weight:900; font-size:12px}
 .author.admin{color: rgba(255,190,190,.95)}
 .time{font-size:11px; color:var(--muted)}
 .text{margin-top:6px; white-space:pre-wrap; word-break:break-word}
+
 .sys{
   align-self:center;
   padding:8px 12px;
@@ -209,6 +225,7 @@ input:focus{
   color: rgba(220,255,235,.9);
   font-size:12px;
 }
+
 .actions{display:flex; gap:8px; margin-left:10px}
 .linkbtn{
   border:none; background:transparent; color: rgba(220,255,235,.75);
@@ -223,7 +240,7 @@ input:focus{
   gap:10px;
   align-items:center;
 }
-.composer input{flex:1}
+.composer input{flex:1; min-width:0}
 .chk{display:flex; gap:6px; align-items:center; font-size:12px; color:var(--muted)}
 .footmsg{
   padding:0 14px 12px;
@@ -232,13 +249,138 @@ input:focus{
   min-height:18px;
 }
 
+/* Iframe for admin_html preview (scripts not allowed in sandbox) */
 iframe.htmlbox{
   width:100%;
   border:1px solid rgba(60,255,143,.18);
   border-radius:14px;
   background: rgba(6,17,11,.35);
 }
+
+/* OVERLAYS */
+.overlay{
+  position:fixed; inset:0;
+  z-index:50;
+  display:flex;
+  align-items:stretch;
+  justify-content:center;
+}
+.overlayBackdrop{
+  position:absolute; inset:0;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(6px);
+}
+.overlayPanel{
+  position:relative;
+  margin:auto;
+  width:min(920px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  background: rgba(10,25,16,.78);
+  border:1px solid rgba(60,255,143,.22);
+  border-radius: 18px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+}
+.overlayHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:12px 12px;
+  border-bottom:1px solid rgba(60,255,143,.18);
+}
+.overlayTitle{font-weight:900}
+.overlayBody{
+  padding:12px;
+  overflow:auto;
+}
+
+/* ADMIN PANEL */
+.adminPanel{width:min(980px, calc(100vw - 24px))}
+.adminTabs{
+  display:flex;
+  gap:8px;
+  padding:10px 12px;
+  border-bottom:1px solid rgba(60,255,143,.18);
+  overflow:auto;
+}
+.adminTab{
+  flex:0 0 auto;
+  border-radius:999px;
+  border:1px solid rgba(60,255,143,.18);
+  background: rgba(6,17,11,.35);
+  color: var(--muted);
+  padding:8px 12px;
+  cursor:pointer;
+  font-weight:800;
+}
+.adminTab.active{
+  color: var(--text);
+  border-color: rgba(60,255,143,.45);
+  box-shadow: 0 0 18px rgba(60,255,143,.10);
+}
+
+.adminBody{display:block}
+.admSection{display:block}
+.admRow{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+.admRow input, .admRow select{flex:1; min-width:160px}
+.admHint{margin-top:8px; font-size:12px; color: rgba(220,255,235,.75); min-height:18px}
+.admList{
+  margin-top:10px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.admItem{
+  border:1px solid rgba(60,255,143,.18);
+  background: rgba(6,17,11,.40);
+  border-radius: 14px;
+  padding:10px 10px;
+}
+.admItemTop{
+  display:flex; justify-content:space-between; align-items:center;
+  gap:10px;
+}
+.admItemName{font-weight:900}
+.admItemMeta{font-size:12px; color: var(--muted)}
+.admItemActions{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.chip{
+  font-size:11px;
+  padding:3px 8px;
+  border-radius:999px;
+  border:1px solid rgba(60,255,143,.22);
+  background: rgba(60,255,143,.08);
+  color: rgba(220,255,235,.9);
+}
+.chip.bad{border-color: rgba(255,120,120,.22); background: rgba(255,120,120,.08)}
+.admCard{
+  margin-top:12px;
+  border:1px solid rgba(60,255,143,.18);
+  background: rgba(6,17,11,.35);
+  border-radius: 16px;
+  padding:12px;
+}
+.admCardTitle{font-weight:900; margin:0 0 10px}
+select, button, input, textarea{font: inherit}
+
+/* MOBILE (handy) */
 @media (max-width: 900px){
   .app{grid-template-columns:1fr}
-  .sidebar{border-right:none; border-bottom:1px solid var(--line)}
+  .sidebar{display:none}
+  .btn.icon{display:inline-flex; align-items:center; justify-content:center}
+  .roomSub{max-width:72vw}
+  .grid{margin:14px auto}
+}
+
+@media (max-width: 520px){
+  .topbar{padding:12px 12px}
+  .right{gap:8px}
+  .pill{max-width:40vw; overflow:hidden; text-overflow:ellipsis}
+  .composer{flex-wrap:wrap}
+  .composer .btn{width:100%}
+  .chk{width:100%; justify-content:flex-start}
+  .overlayPanel{width:calc(100vw - 16px)}
+  .adminTabs{gap:6px}
+  .adminTab{padding:8px 10px}
 }
