@@ -31,9 +31,20 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "64kb" }));
 app.use(express.urlencoded({ extended: false }));
 
+function shouldUseSsl(url) {
+  const s = String(url || "");
+  // Supabase Pooler/DB braucht SSL; Render->Supabase praktisch immer.
+  return (
+    s.includes("supabase.com") ||
+    s.includes("sslmode=require") ||
+    s.includes("pooler") ||
+    isProd
+  );
+}
+
 const pool = new pg.Pool({
   connectionString: DATABASE_URL,
-  ssl: DATABASE_URL.includes("sslmode=require") ? { rejectUnauthorized: false } : undefined,
+  ssl: shouldUseSsl(DATABASE_URL) ? { rejectUnauthorized: false } : undefined,
 });
 
 const PgStore = connectPgSimple(session);
@@ -136,6 +147,7 @@ async function initDb() {
     );
   `);
 
+  // Idempotente Adds (falls DB mal älter war)
   await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_until TIMESTAMPTZ;`);
   await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS timeout_until TIMESTAMPTZ;`);
   await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_password_change BOOLEAN NOT NULL DEFAULT FALSE;`);
@@ -178,14 +190,18 @@ function requireAuth(req, res, next) {
 async function requireFreshSession(req, res, next) {
   const u = await getUserById(req.session.userId);
   if (!u) return res.status(401).json({ ok: false, error: "not_authenticated" });
+
   if ((req.session.sessionVersion ?? 0) !== u.session_version) {
     req.session.destroy(() => {});
     return res.status(401).json({ ok: false, error: "session_invalidated" });
   }
+
   if (u.banned_until && new Date(u.banned_until) > now()) return res.status(403).json({ ok: false, error: "banned" });
+
   if (u.needs_password_change && req.path !== "/api/change-password" && req.path !== "/api/logout" && req.path !== "/api/me") {
     return res.status(403).json({ ok: false, error: "password_change_required" });
   }
+
   req.user = u;
   next();
 }
@@ -451,7 +467,7 @@ app.post("/api/admin/bootstrap", async (req, res) => {
   res.json({ ok: true, adminId: r.rows[0].id, needsPasswordChange: true });
 });
 
-app.get("/api/admin/me", requireAuth, requireFreshSession, requireAdmin, async (req, res) => {
+app.get("/api/admin/me", requireAuth, requireFreshSession, requireAdmin, async (_req, res) => {
   res.json({ ok: true });
 });
 
