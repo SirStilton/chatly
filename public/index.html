@@ -8,844 +8,99 @@
 </head>
 <body>
   <div class="bg"></div>
-  <div id="toast" class="toast" aria-live="polite"></div>
 
-  <!-- AUTH -->
-  <div id="auth" class="center">
-    <div class="glass card auth">
-      <div class="authTop">
-        <div class="brand">
-          <div class="logo">C</div>
-          <div class="brandText">
-            <div class="brandName">Chatly</div>
-            <div class="brandTag">green • glass • realtime</div>
-          </div>
-        </div>
-        <div class="seg">
-          <button id="tabLogin" class="segBtn active" type="button">Login</button>
-          <button id="tabRegister" class="segBtn" type="button">Register</button>
-        </div>
-      </div>
-
-      <div id="paneLogin" class="pane">
-        <div class="field">
-          <label>Username</label>
-          <input id="logUser" autocomplete="username" spellcheck="false" placeholder="z.B. Tom" />
-        </div>
-        <div class="field">
-          <label>Passwort</label>
-          <input id="logPass" type="password" autocomplete="current-password" placeholder="••••••••" />
-        </div>
-        <button id="btnLogin" class="btn primary" type="button">Einloggen</button>
-        <div class="hint">Admin? Nach dem Login Setup machen (neue Passwörter).</div>
-      </div>
-
-      <div id="paneRegister" class="pane hidden">
-        <div class="field">
-          <label>Username</label>
-          <input id="regUser" autocomplete="username" spellcheck="false" placeholder="3–24 Zeichen" />
-        </div>
-        <div class="field">
-          <label>Passwort</label>
-          <input id="regPass" type="password" autocomplete="new-password" placeholder="mind. 4 Zeichen" />
-        </div>
-        <div class="field">
-          <label>Avatar URL (optional)</label>
-          <input id="regAvatar" spellcheck="false" placeholder="https://..." />
-        </div>
-        <div class="field">
-          <label>Bio (optional)</label>
-          <textarea id="regBio" rows="3" placeholder="kurz & nice"></textarea>
-        </div>
-        <button id="btnRegister" class="btn primary" type="button">Account erstellen</button>
-        <div class="hint">Kein Spam, kein Stress. Einfach chatten.</div>
+  <header class="topbar">
+    <div class="brand">
+      <div class="dot"></div>
+      <div>
+        <div class="title">Chatly</div>
+        <div class="sub" id="statusText">offline</div>
       </div>
     </div>
-  </div>
 
-  <!-- APP -->
-  <div id="app" class="app hidden">
-    <header class="glass topbar">
-      <div class="left">
-        <div class="brandMini">
-          <div class="logo sm">C</div>
-          <div class="title">Chatly</div>
-        </div>
+    <div class="right">
+      <div class="pill" id="mePill">nicht angemeldet</div>
+      <button class="btn ghost" id="btnLogout" style="display:none;">Logout</button>
+    </div>
+  </header>
 
-        <div class="roomBar">
-          <div class="chipRow">
-            <button class="chip" data-room="lobby" type="button">#lobby</button>
-            <button class="chip" data-room="general" type="button">#general</button>
-            <button class="chip" data-room="help" type="button">#help</button>
-          </div>
+  <main class="grid">
+    <section class="card auth" id="authCard">
+      <h2>Anmelden</h2>
+      <p class="hint">Keine E-Mail. Username max 10 Zeichen.</p>
 
-          <div class="roomJoin">
-            <input id="roomInput" spellcheck="false" placeholder="room…" />
-            <button id="btnJoin" class="btn" type="button">Join</button>
-            <div class="conn" id="conn">offline</div>
-          </div>
-        </div>
+      <div class="tabs">
+        <button class="tab active" id="tabLogin">Login</button>
+        <button class="tab" id="tabRegister">Registrieren</button>
       </div>
 
-      <div class="right">
-        <div class="me">
-          <img id="meAvatarImg" class="meAvatar" alt="" />
-          <div class="meMeta">
-            <div class="meNameLine">
-              <span id="meName">-</span>
-              <span id="meRole" class="badge">-</span>
-              <span id="meStatusBadge" class="badge soft hidden">offline</span>
-            </div>
-            <div class="meSub">
-              room <span class="mono" id="roomName">lobby</span>
-            </div>
-          </div>
-        </div>
+      <form id="loginForm" class="form">
+        <label>Username</label>
+        <input id="loginUser" maxlength="10" autocomplete="username" placeholder="z.B. CyberFox" />
+        <label>Passwort</label>
+        <input id="loginPass" type="password" autocomplete="current-password" placeholder="mind. 8 Zeichen" />
+        <button class="btn" type="submit">Login</button>
+        <div class="msg" id="loginMsg"></div>
+      </form>
 
-        <div class="actions">
-          <button id="btnProfile" class="btn" type="button">Profil</button>
-          <button id="btnDMs" class="btn" type="button">DMs</button>
-          <button id="btnFriends" class="btn" type="button">Friends</button>
-          <button id="btnAdmin" class="btn danger hidden" type="button">Admin</button>
-          <button id="btnSettings" class="btn" type="button">Settings</button>
-          <button id="btnLogout" class="btn" type="button">Logout</button>
-        </div>
-      </div>
-    </header>
+      <form id="registerForm" class="form" style="display:none;">
+        <label>Username</label>
+        <input id="regUser" maxlength="10" autocomplete="username" placeholder="nur Buchstaben + Zahlen" />
+        <label>Passwort</label>
+        <input id="regPass" type="password" autocomplete="new-password" placeholder="mind. 8 Zeichen" />
+        <button class="btn" type="submit">Account erstellen</button>
+        <div class="msg" id="regMsg"></div>
+      </form>
+    </section>
 
-    <main class="layout">
-      <!-- LEFT SIDEBAR -->
-      <aside class="glass side">
-        <!-- UPDATE 2: Kategorien / Rooms -->
-        <div class="sideTitle">Rooms</div>
-        <div class="sideBlock">
-          <div class="hint">Kategorien (Update 2 UI)</div>
-          <div class="catList">
-            <button class="chip" data-room="lobby" type="button">General • #lobby</button>
-            <button class="chip" data-room="general" type="button">General • #general</button>
-            <button class="chip" data-room="help" type="button">Support • #help</button>
-            <button class="chip" data-room="events" type="button">Events • #events</button>
-          </div>
-          <div class="divider"></div>
-          <div class="row">
-            <input id="newRoomQuick" spellcheck="false" placeholder="new room…" />
-            <button id="btnCreateRoomQuick" class="btn" type="button">Create</button>
-          </div>
-          <div class="hint">Create ist Update 1/2: Admin kann Räume erstellen (später mit Passwort/Kategorie).</div>
+    <section class="card app" id="appCard" style="display:none;">
+      <aside class="sidebar">
+        <div class="sideTop">
+          <div class="sideTitle">Räume</div>
+          <button class="btn ghost small" id="btnRefreshRooms">refresh</button>
         </div>
+        <div class="rooms" id="rooms"></div>
 
-        <!-- UPDATE 2: Online / Typing -->
-        <div class="sideTitle">Online</div>
-        <div class="sideBlock">
-          <div class="row">
-            <input id="searchOnline" spellcheck="false" placeholder="search…" />
-            <button id="btnRefreshOnline" class="btn" type="button">Refresh</button>
+        <div class="sideBottom">
+          <div class="mini">
+            <span class="k">Regeln</span>
+            <span class="v">max 100 Zeichen</span>
           </div>
-          <div id="onlineList" class="listBox">
-            <div class="hint">UI Platzhalter (Update 2): Online users + Status + “typing…”</div>
+          <div class="mini">
+            <span class="k">Realtime</span>
+            <span class="v" id="rtText">Socket.IO</span>
           </div>
-        </div>
-
-        <!-- Profil Preview -->
-        <div class="sideTitle">Profil Vorschau</div>
-        <div class="sideBlock">
-          <div class="profilePreview">
-            <img id="previewAvatar" class="avatarLg" alt="" />
-            <div class="pvText">
-              <div class="pvName" id="previewName">-</div>
-              <div class="pvBio" id="previewBio">-</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Profile search -->
-        <div class="sideTitle">Search Profile</div>
-        <div class="sideBlock">
-          <div class="row">
-            <input id="searchUser" spellcheck="false" placeholder="username…" />
-            <button id="btnSearchUser" class="btn" type="button">Go</button>
-          </div>
-          <div id="searchResult" class="searchResult"></div>
-          <div class="divider"></div>
-          <div class="row end">
-            <button id="btnOpenUserCard" class="btn" type="button">Open User Card</button>
-          </div>
-          <div class="hint">Update 2: User Card mit Add Friend / DM / Moderation (Admin).</div>
         </div>
       </aside>
 
-      <!-- CHAT -->
-      <section class="glass chatWrap">
-        <div class="chatTop">
-          <div class="roomTitle">
-            <span class="hash">#</span><span id="roomTitle">lobby</span>
-            <span id="roomCategoryPill" class="pill">General</span>
+      <section class="chat">
+        <div class="chatHead">
+          <div>
+            <div class="roomTitle" id="roomTitle">Lobby</div>
+            <div class="roomSub" id="roomSub">Allgemeiner Chat</div>
           </div>
-
-          <div class="row gap">
-            <button id="btnRoomInfo" class="btn" type="button">Room Info</button>
-            <button id="btnTrending" class="btn" type="button">Trending</button>
-            <button id="btnClearLocal" class="btn" type="button">Clear</button>
+          <div class="chatRight">
+            <div class="pill" id="roomPill">#lobby</div>
           </div>
         </div>
 
-        <div id="typingBar" class="typingBar hidden">Someone is typing…</div>
-
-        <div id="chat" class="chat" aria-live="polite"></div>
+        <div class="msgs" id="msgs"></div>
 
         <div class="composer">
-          <div class="composerLeft">
-            <button id="btnEmoji" class="iconBtn" type="button">😊</button>
-            <button id="btnAttach" class="iconBtn" type="button">＋</button>
-          </div>
-
-          <textarea id="msg" rows="2" placeholder="Nachricht… (Enter = senden, Shift+Enter = neue Zeile)"></textarea>
-
-          <div class="composerRight">
-            <button id="btnSend" class="btn primary" type="button">Send</button>
-          </div>
+          <input id="msgInput" maxlength="100" placeholder="Nachricht (max 100 Zeichen)..." />
+          <label class="chk" id="htmlWrap" style="display:none;">
+            <input type="checkbox" id="sendHtml" />
+            <span>als HTML</span>
+          </label>
+          <button class="btn" id="btnSend">Senden</button>
         </div>
 
-        <div class="hint" style="margin-top:10px;">
-          Update 1: Eigene Nachricht löschen per “⋯”. • Update 2: Reactions / Reply / Pins. • Update 3: Automod/AI Hinweise.
-        </div>
+        <div class="footmsg" id="footMsg"></div>
       </section>
-    </main>
-  </div>
+    </section>
+  </main>
 
-  <!-- BACKDROP -->
-  <div id="modalBackdrop" class="backdrop hidden"></div>
-
-  <!-- PROFILE MODAL (Update 1 + 2) -->
-  <div id="modalProfile" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="glass card modalCard">
-      <div class="modalTop">
-        <div class="modalTitle">Profil</div>
-        <button class="iconBtn" data-close="modalProfile" type="button">✕</button>
-      </div>
-
-      <div class="tabs">
-        <button class="tabBtn active" data-tab="me" type="button">Me</button>
-        <button class="tabBtn" data-tab="security" type="button">Security</button>
-        <button class="tabBtn" data-tab="danger" type="button">Danger</button>
-      </div>
-
-      <div id="p_tab_me" class="tabPane">
-        <div class="grid2">
-          <div class="field">
-            <label>Avatar URL</label>
-            <input id="meAvatar" spellcheck="false" placeholder="https://..." />
-          </div>
-          <div class="field">
-            <label>Bio</label>
-            <textarea id="meBio" rows="4" placeholder="kurz & nice"></textarea>
-          </div>
-        </div>
-        <div class="row end">
-          <button id="btnSaveProfile" class="btn primary" type="button">Speichern</button>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="modalTitle small">Status (Update 2)</div>
-        <div class="grid2">
-          <div class="field">
-            <label>Status</label>
-            <select id="meStatusSelect">
-              <option value="online">online</option>
-              <option value="away">away</option>
-              <option value="dnd">do not disturb</option>
-              <option value="offline">offline</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <button id="btnSaveStatus" class="btn" type="button">Save Status</button>
-          </div>
-        </div>
-      </div>
-
-      <div id="p_tab_security" class="tabPane hidden">
-        <div class="modalTitle small">Passwort ändern (Update 1)</div>
-        <div class="grid2">
-          <div class="field">
-            <label>Altes Passwort</label>
-            <input id="pwOld" type="password" autocomplete="current-password" />
-          </div>
-          <div class="field">
-            <label>Neues Passwort</label>
-            <input id="pwNew" type="password" autocomplete="new-password" />
-          </div>
-        </div>
-        <div class="row end">
-          <button id="btnChangePw" class="btn" type="button">Ändern</button>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="modalTitle small">Privacy (Update 2)</div>
-        <div class="grid2">
-          <div class="field">
-            <label>DMs erlauben</label>
-            <select id="dmPrivacy">
-              <option value="everyone">everyone</option>
-              <option value="friends">friends only</option>
-              <option value="none">none</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <button id="btnSavePrivacy" class="btn" type="button">Save Privacy</button>
-          </div>
-        </div>
-      </div>
-
-      <div id="p_tab_danger" class="tabPane hidden">
-        <div class="modalTitle small">Account löschen (Update 1)</div>
-        <div class="hint">Das löscht deinen Account dauerhaft. Bestätigung per Passwort.</div>
-        <div class="grid2">
-          <div class="field">
-            <label>Passwort zur Bestätigung</label>
-            <input id="delPw" type="password" autocomplete="current-password" />
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <button id="btnDeleteAccount" class="btn danger" type="button">Account löschen</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- SETTINGS MODAL (Update 2 + 3) -->
-  <div id="modalSettings" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="glass card modalCard">
-      <div class="modalTop">
-        <div class="modalTitle">Settings</div>
-        <button class="iconBtn" data-close="modalSettings" type="button">✕</button>
-      </div>
-
-      <div class="tabs">
-        <button class="tabBtn active" data-tab="appearance" type="button">Appearance</button>
-        <button class="tabBtn" data-tab="rooms" type="button">Rooms</button>
-        <button class="tabBtn" data-tab="smart" type="button">Smart</button>
-      </div>
-
-      <div id="s_tab_appearance" class="tabPane">
-        <div class="modalTitle small">Background (Update 2)</div>
-        <div class="grid2">
-          <div class="field">
-            <label>Chat Background</label>
-            <select id="bgSelect">
-              <option value="glass">glass</option>
-              <option value="matrix">matrix</option>
-              <option value="aurora">aurora</option>
-              <option value="dark">dark</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <button id="btnSaveBg" class="btn" type="button">Apply</button>
-          </div>
-        </div>
-        <div class="hint">UI vorhanden, Logik kommt in script.js.</div>
-      </div>
-
-      <div id="s_tab_rooms" class="tabPane hidden">
-        <div class="modalTitle small">Room Password (Update 1/2)</div>
-        <div class="grid2">
-          <div class="field">
-            <label>Join password</label>
-            <input id="joinRoomPw" type="password" autocomplete="current-password" placeholder="wenn Room geschützt ist" />
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <button id="btnJoinWithPw" class="btn" type="button">Join with password</button>
-          </div>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="modalTitle small">Pinned Messages (Update 2)</div>
-        <div id="pinsList" class="listBox">
-          <div class="hint">Pins UI (wird später gefüllt)</div>
-        </div>
-      </div>
-
-      <div id="s_tab_smart" class="tabPane hidden">
-        <div class="modalTitle small">Smart Filters (Update 3)</div>
-        <div class="grid2">
-          <div class="field">
-            <label>Automod Level</label>
-            <select id="automodLevel">
-              <option value="off">off</option>
-              <option value="low">low</option>
-              <option value="med">medium</option>
-              <option value="high">high</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <button id="btnSaveAutomod" class="btn" type="button">Save</button>
-          </div>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="modalTitle small">AI / Bot Integrations (Update 3)</div>
-        <div class="hint">
-          UI vorbereitet: später kann der Admin hier Bot-Features aktivieren (z.B. Kategorie-Bot, Automod, Antwort-Trigger).
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- DMs MODAL (Update 2) -->
-  <div id="modalDMs" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="glass card modalCard">
-      <div class="modalTop">
-        <div class="modalTitle">DMs</div>
-        <button class="iconBtn" data-close="modalDMs" type="button">✕</button>
-      </div>
-
-      <div class="grid2">
-        <div class="sideBlock">
-          <div class="modalTitle small">Conversations</div>
-          <div class="row">
-            <input id="dmSearch" spellcheck="false" placeholder="search…" />
-            <button id="btnDmRefresh" class="btn" type="button">Refresh</button>
-          </div>
-          <div id="dmList" class="listBox" style="margin-top:10px;">
-            <div class="hint">Update 2 UI: DM List</div>
-          </div>
-        </div>
-
-        <div class="sideBlock">
-          <div class="modalTitle small">Chat</div>
-          <div id="dmChat" class="dmChatBox">
-            <div class="hint">Update 2 UI: DM messages</div>
-          </div>
-          <div class="composer">
-            <textarea id="dmMsg" rows="2" placeholder="DM…"></textarea>
-            <button id="btnDmSend" class="btn primary" type="button">Send</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- FRIENDS MODAL (Update 2) -->
-  <div id="modalFriends" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="glass card modalCard">
-      <div class="modalTop">
-        <div class="modalTitle">Friends</div>
-        <button class="iconBtn" data-close="modalFriends" type="button">✕</button>
-      </div>
-
-      <div class="tabs">
-        <button class="tabBtn active" data-tab="friends" type="button">Friends</button>
-        <button class="tabBtn" data-tab="requests" type="button">Requests</button>
-        <button class="tabBtn" data-tab="blocked" type="button">Blocked</button>
-      </div>
-
-      <div id="f_tab_friends" class="tabPane">
-        <div class="row">
-          <input id="friendSearch" spellcheck="false" placeholder="username…" />
-          <button id="btnAddFriend" class="btn" type="button">Add</button>
-        </div>
-        <div id="friendsList" class="listBox" style="margin-top:10px;">
-          <div class="hint">Update 2 UI: Friends list</div>
-        </div>
-      </div>
-
-      <div id="f_tab_requests" class="tabPane hidden">
-        <div id="friendRequests" class="listBox">
-          <div class="hint">Update 2 UI: incoming/outgoing requests</div>
-        </div>
-      </div>
-
-      <div id="f_tab_blocked" class="tabPane hidden">
-        <div id="blockedList" class="listBox">
-          <div class="hint">Update 2 UI: blocked users</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ROOM INFO MODAL (Update 1/2) -->
-  <div id="modalRoomInfo" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="glass card modalCard">
-      <div class="modalTop">
-        <div class="modalTitle">Room Info</div>
-        <button class="iconBtn" data-close="modalRoomInfo" type="button">✕</button>
-      </div>
-
-      <div class="grid2">
-        <div class="sideBlock">
-          <div class="modalTitle small">Rules</div>
-          <div id="roomRulesBox" class="hint">Update 1/2 UI: room rules text</div>
-          <div class="divider"></div>
-          <div class="modalTitle small">Members</div>
-          <div id="roomMembersBox" class="hint">Update 2 UI: member list</div>
-        </div>
-
-        <div class="sideBlock">
-          <div class="modalTitle small">Tools</div>
-          <div class="row">
-            <button id="btnPinMessage" class="btn" type="button">Pin last message</button>
-            <button id="btnExportRoom" class="btn" type="button">Export</button>
-          </div>
-          <div class="hint">Pin/Export sind Update 2 UI. Export kann später als JSON/CSV kommen.</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- TRENDING MODAL (Update 1) -->
-  <div id="modalTrending" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="glass card modalCard">
-      <div class="modalTop">
-        <div class="modalTitle">Trending Rooms</div>
-        <button class="iconBtn" data-close="modalTrending" type="button">✕</button>
-      </div>
-      <div id="trendingList" class="listBox">
-        <div class="hint">Update 1 UI: Top rooms nach Aktivität</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- USER CARD MODAL (Update 2 + Admin controls from Update 1) -->
-  <div id="modalUserCard" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="glass card modalCard">
-      <div class="modalTop">
-        <div class="modalTitle">User Card</div>
-        <button class="iconBtn" data-close="modalUserCard" type="button">✕</button>
-      </div>
-
-      <div class="grid2">
-        <div class="sideBlock">
-          <div class="row" style="align-items:center;">
-            <img id="ucAvatar" class="avatarLg" alt="">
-            <div>
-              <div class="pvName" id="ucName">-</div>
-              <div class="hint" id="ucMeta">-</div>
-            </div>
-          </div>
-          <div class="divider"></div>
-          <div class="hint" id="ucBio">-</div>
-        </div>
-
-        <div class="sideBlock">
-          <div class="modalTitle small">Actions (Update 2)</div>
-          <div class="row" style="flex-wrap:wrap;">
-            <button id="btnUcDM" class="btn" type="button">DM</button>
-            <button id="btnUcFriend" class="btn" type="button">Add Friend</button>
-            <button id="btnUcBlock" class="btn" type="button">Block</button>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="modalTitle small">Admin Actions (Update 1)</div>
-          <div class="hint">Diese Buttons funktionieren später nur, wenn Admin Panel entsperrt ist.</div>
-          <div class="row" style="flex-wrap:wrap;">
-            <button id="btnUcMute" class="btn danger" type="button">Mute</button>
-            <button id="btnUcBan" class="btn danger" type="button">Ban</button>
-            <button id="btnUcKick" class="btn danger" type="button">Kick</button>
-            <button id="btnUcForce" class="btn" type="button">Force Room</button>
-          </div>
-          <div class="row" style="margin-top:10px;">
-            <input id="ucForceRoom" spellcheck="false" placeholder="room…" />
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ADMIN SETUP (Update 1) -->
-  <div id="modalSetup" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="glass card modalCard">
-      <div class="modalTop">
-        <div class="modalTitle">Admin Setup</div>
-        <button class="iconBtn" data-close="modalSetup" type="button">✕</button>
-      </div>
-      <div class="hint">Du musst jetzt das Admin-Login-Passwort und das Admin-Panel-Passwort neu setzen.</div>
-      <div class="grid2">
-        <div class="field">
-          <label>Aktuelles Admin-Login-Passwort</label>
-          <input id="setupCurrentLogin" type="password" autocomplete="current-password" />
-        </div>
-        <div class="field">
-          <label>Neues Admin-Login-Passwort</label>
-          <input id="setupNewLogin" type="password" autocomplete="new-password" />
-        </div>
-        <div class="field">
-          <label>Neues Admin-Panel-Passwort</label>
-          <input id="setupNewPanel" type="password" autocomplete="new-password" />
-        </div>
-      </div>
-      <div class="row end">
-        <button id="btnDoSetup" class="btn danger" type="button">Setup speichern</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ADMIN UNLOCK (Update 1) -->
-  <div id="modalUnlock" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="glass card modalCard">
-      <div class="modalTop">
-        <div class="modalTitle">Admin Panel entsperren</div>
-        <button class="iconBtn" data-close="modalUnlock" type="button">✕</button>
-      </div>
-      <div class="field">
-        <label>Admin-Panel-Passwort</label>
-        <input id="unlockPw" type="password" autocomplete="current-password" />
-      </div>
-      <div class="row end">
-        <button id="btnDoUnlock" class="btn danger" type="button">Entsperren</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ADMIN PANEL (Update 1 + Bot Studio UI from Update 3) -->
-  <div id="modalAdmin" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="glass card modalCard">
-      <div class="modalTop">
-        <div class="modalTitle">Admin Panel</div>
-        <div class="row gap">
-          <div class="pill">Status: <span class="mono" id="adminLockState">gesperrt</span></div>
-          <button id="btnAdminLock" class="btn hidden" type="button">Lock</button>
-          <button id="btnOpenUnlock" class="btn danger" type="button">Unlock</button>
-          <button class="iconBtn" data-close="modalAdmin" type="button">✕</button>
-        </div>
-      </div>
-
-      <div class="tabs">
-        <button class="tabBtn active" data-tab="mod" type="button">Moderation</button>
-        <button class="tabBtn" data-tab="users" type="button">Users</button>
-        <button class="tabBtn" data-tab="rooms" type="button">Rooms</button>
-        <button class="tabBtn" data-tab="logs" type="button">Logs</button>
-        <button class="tabBtn" data-tab="announce" type="button">Announcement</button>
-        <button class="tabBtn" data-tab="pw" type="button">Passwörter</button>
-        <button class="tabBtn" data-tab="bots" type="button">Bots (U3)</button>
-        <button class="tabBtn" data-tab="automod" type="button">Automod (U3)</button>
-      </div>
-
-      <!-- MOD (Update 1) -->
-      <div id="tab_mod" class="tabPane">
-        <div class="grid2">
-          <div class="field">
-            <label>Target Username</label>
-            <input id="admTarget" spellcheck="false" placeholder="username…" />
-          </div>
-          <div class="field">
-            <label>Action</label>
-            <select id="admAction">
-              <option value="ban">ban</option>
-              <option value="unban">unban</option>
-              <option value="mute">mute</option>
-              <option value="unmute">unmute</option>
-              <option value="kick">kick</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Duration (sek) oder "perm"</label>
-            <input id="admDur" spellcheck="false" value="perm" />
-          </div>
-          <div class="field">
-            <label>Reason</label>
-            <input id="admReason" spellcheck="false" placeholder="optional…" />
-          </div>
-        </div>
-        <div class="row end">
-          <button id="btnAdmDo" class="btn danger" type="button">Apply</button>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="grid2">
-          <div class="field">
-            <label>Force Room</label>
-            <input id="admRoom" spellcheck="false" placeholder="z.B. lobby" />
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <button id="btnAdmForceRoom" class="btn" type="button">Force</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- USERS (Update 1 + Update 2 info) -->
-      <div id="tab_users" class="tabPane hidden">
-        <div class="grid2">
-          <div class="field">
-            <label>Suche</label>
-            <input id="admUserSearch" spellcheck="false" placeholder="username…" />
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
-            <button id="btnAdmLoadUsers" class="btn" type="button">Refresh</button>
-          </div>
-        </div>
-        <div id="admUsersList" class="listBox">
-          <div class="hint">Update 1/2 UI: Userliste mit Status, Quick actions, DM/Friend.</div>
-        </div>
-      </div>
-
-      <!-- ROOMS (Update 1/2) -->
-      <div id="tab_rooms" class="tabPane hidden">
-        <div class="modalTitle small">Room erstellen / ändern</div>
-        <div class="grid2">
-          <div class="field">
-            <label>Room Name</label>
-            <input id="roomNameEdit" spellcheck="false" placeholder="z.B. events" />
-          </div>
-          <div class="field">
-            <label>Passwort (optional)</label>
-            <input id="roomPwEdit" type="password" autocomplete="new-password" placeholder="leer = ohne" />
-          </div>
-        </div>
-        <div class="grid2">
-          <div class="field">
-            <label>Kategorie (Update 2)</label>
-            <input id="roomCategoryEdit" spellcheck="false" placeholder="z.B. General / Support" />
-          </div>
-          <div class="field">
-            <label>Regeln (kurz)</label>
-            <input id="roomRulesEdit" spellcheck="false" placeholder="z.B. kein Spam, respektvoll" />
-          </div>
-        </div>
-        <div class="row end">
-          <button id="btnSaveRoom" class="btn danger" type="button">Save Room</button>
-        </div>
-        <div class="divider"></div>
-        <div class="row end">
-          <button id="btnLoadRooms" class="btn" type="button">Rooms laden</button>
-        </div>
-        <div id="roomsList" class="listBox">
-          <div class="hint">Rooms UI</div>
-        </div>
-      </div>
-
-      <!-- LOGS (Update 1) -->
-      <div id="tab_logs" class="tabPane hidden">
-        <div class="row end">
-          <button id="btnLoadLogs" class="btn" type="button">Logs laden</button>
-        </div>
-        <div id="admLogs" class="listBox">
-          <div class="hint">Moderations-Logs UI</div>
-        </div>
-      </div>
-
-      <!-- ANNOUNCE (Update 1, admin safe HTML) -->
-      <div id="tab_announce" class="tabPane hidden">
-        <div class="grid2">
-          <div class="field">
-            <label>Room</label>
-            <input id="annRoom" spellcheck="false" value="lobby" />
-          </div>
-          <div class="field">
-            <label>Mode</label>
-            <select id="annMode">
-              <option value="text">text</option>
-              <option value="html">html (safe)</option>
-            </select>
-          </div>
-        </div>
-        <div class="field">
-          <label>Content</label>
-          <textarea id="annContent" rows="5" placeholder="Text oder safe HTML…"></textarea>
-        </div>
-        <div class="hint">Safe HTML: &lt;b&gt;, &lt;i&gt;, &lt;u&gt;, &lt;br&gt;, &lt;a&gt;, &lt;code&gt;.</div>
-        <div class="row end">
-          <button id="btnAnnSend" class="btn danger" type="button">Send</button>
-        </div>
-      </div>
-
-      <!-- PW (Update 1) -->
-      <div id="tab_pw" class="tabPane hidden">
-        <div class="grid2">
-          <div class="field">
-            <label>User</label>
-            <input id="admUser" spellcheck="false" placeholder="username…" />
-          </div>
-          <div class="field">
-            <label>Neues Passwort</label>
-            <input id="admNewPw" type="password" autocomplete="new-password" />
-          </div>
-        </div>
-        <div class="row end">
-          <button id="btnAdmChangePw" class="btn danger" type="button">Set</button>
-        </div>
-      </div>
-
-      <!-- BOTS (Update 3 UI) -->
-      <div id="tab_bots" class="tabPane hidden">
-        <div class="modalTitle small">Bot Studio</div>
-        <div class="hint">Update 3: Admin kann Bots erstellen & Commands definieren.</div>
-
-        <div class="grid2">
-          <div class="field">
-            <label>Bot Name</label>
-            <input id="botName" spellcheck="false" placeholder="z.B. CategoryBot" />
-          </div>
-          <div class="field">
-            <label>Bot Room</label>
-            <input id="botRoom" spellcheck="false" placeholder="z.B. lobby" />
-          </div>
-        </div>
-
-        <div class="field">
-          <label>Commands (UI)</label>
-          <textarea id="botCommands" rows="6" placeholder="!help => ...&#10;!rooms => ...&#10;!join <room> => ..."></textarea>
-        </div>
-
-        <div class="row end">
-          <button id="btnBotSave" class="btn danger" type="button">Save Bot</button>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="row end">
-          <button id="btnBotList" class="btn" type="button">Bots laden</button>
-        </div>
-        <div id="botList" class="listBox">
-          <div class="hint">Bot list UI</div>
-        </div>
-      </div>
-
-      <!-- AUTOMOD (Update 3 UI) -->
-      <div id="tab_automod" class="tabPane hidden">
-        <div class="modalTitle small">Automod</div>
-        <div class="hint">Update 3 UI: Regeln + Rate-limits + (optional) AI-Filter.</div>
-
-        <div class="grid2">
-          <div class="field">
-            <label>Max messages / 10s</label>
-            <input id="amRate" spellcheck="false" value="8" />
-          </div>
-          <div class="field">
-            <label>Bad words mode</label>
-            <select id="amWords">
-              <option value="off">off</option>
-              <option value="soft">soft</option>
-              <option value="strict">strict</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="field">
-          <label>Custom blacklist (1 per line)</label>
-          <textarea id="amBlacklist" rows="6" placeholder="word1&#10;word2"></textarea>
-        </div>
-
-        <div class="row end">
-          <button id="btnAutomodSave" class="btn danger" type="button">Save</button>
-        </div>
-      </div>
-
-    </div>
-  </div>
-
+  <script src="/socket.io/socket.io.js"></script>
   <script src="./script.js"></script>
 </body>
 </html>
