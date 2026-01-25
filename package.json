@@ -7,17 +7,13 @@
     "start": "node server.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": "20.x"
   },
   "dependencies": {
-    "bcrypt": "^5.1.1",
-    "better-sqlite3": "^9.4.0",
-    "connect-pg-simple": "^9.0.1",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
     "express": "^4.19.2",
-    "express-session": "^1.17.3",
-    "pg": "^8.11.5",
+    "pg": "^8.12.0",
     "socket.io": "^4.7.5"
   }
 }
