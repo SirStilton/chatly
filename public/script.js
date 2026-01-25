@@ -624,3 +624,45 @@ async function boot() {
 }
 
 boot();
+
+
+// --- UI helpers (safe additions) ---
+(function(){
+  // close overlays by data-close
+  document.querySelectorAll('[data-close]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.getAttribute('data-close');
+      const el = document.getElementById(id);
+      if (el) { try{ el.style.display='none'; }catch(e){} document.body.classList.remove('noScroll'); }
+    });
+  });
+
+  // Admin tabs switching (if markup exists)
+  const admButtons = Array.from(document.querySelectorAll('[data-admtab]'));
+  if (admButtons.length){
+    const tabs = {
+      users: document.getElementById('admUsers'),
+      rooms: document.getElementById('admRooms'),
+      logs: document.getElementById('admLogs'),
+      bots: document.getElementById('admBots'),
+      system: document.getElementById('admSystem'),
+    };
+    const setTab = (k)=>{
+      admButtons.forEach(b=>b.classList.toggle('active', b.getAttribute('data-admtab')===k));
+      Object.entries(tabs).forEach(([name, el])=>{
+        if (!el) return;
+        el.style.display = (name===k) ? 'block' : 'none';
+      });
+    };
+    admButtons.forEach(b=> b.addEventListener('click', ()=> setTab(b.getAttribute('data-admtab')) ));
+    setTab('users');
+  }
+
+  // mobile sidebar toggle
+  const btn = document.getElementById('btnMobileMenu');
+  const sb = document.getElementById('sidebar');
+  if (btn && sb){
+    btn.addEventListener('click', ()=> sb.classList.toggle('open'));
+  }
+})();
+
