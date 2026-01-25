@@ -14,99 +14,115 @@ const PORT = process.env.PORT || 10000;
 const DATABASE_URL = process.env.DATABASE_URL;
 const SESSION_SECRET = process.env.SESSION_SECRET;
 
-if (!SESSION_SECRET) {
-  console.error("Missing env var SESSION_SECRET");
-  process.exit(1);
-}
-if (!DATABASE_URL) {
-  console.error("Missing env var DATABASE_URL");
-  process.exit(1);
-}
+if (!DATABASE_URL) throw new Error("Missing env DATABASE_URL");
+if (!SESSION_SECRET) throw new Error("Missing env SESSION_SECRET");
 
-// ---- Postgres Pool ----
-// Fix für Supabase/Render: SELF_SIGNED_CERT_IN_CHAIN -> rejectUnauthorized:false
-function makePool(connectionString) {
-  if (!connectionString) throw new Error("DATABASE_URL fehlt.");
-
-  // Manche URLs enthalten ?sslmode=require/verify-full (oder ähnliches).
-  // Das kann Zertifikats-Checks erzwingen und in Render/Supabase dann knallen.
-  // Wir entfernen ssl-Query-Parameter und setzen SSL-Optionen explizit.
-  let cleaned = connectionString;
+// --- Supabase/Render SSL Fix ---
+function stripQuery(urlString) {
   try {
-    const u = new URL(connectionString);
-    ["sslmode", "ssl", "sslcert", "sslkey", "sslrootcert", "sslpassword", "uselibpqcompat"].forEach((k) =>
-      u.searchParams.delete(k)
-    );
-    cleaned = u.toString();
+    const u = new URL(urlString);
+    u.search = "";
+    return u.toString();
   } catch {
-    // falls URL() die Connection-String-Variante nicht mag → einfach so lassen
+    return urlString;
   }
-
-  const isSupabase = /supabase\.com/i.test(cleaned);
-
-  // Für Supabase/Pooler in Render: SSL an, aber Zertifikatskette NICHT hart prüfen
-  // (sonst: SELF_SIGNED_CERT_IN_CHAIN).
-  const ssl =
-    isSupabase
-      ? { rejectUnauthorized: false }
-      : (process.env.PGSSL === "false" || process.env.PGSSL === "0" ? false : undefined);
-
-  return new Pool({
-    connectionString: cleaned,
-    ssl,
-    max: Number(process.env.PG_POOL_MAX || 10),
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 10_000,
-  });
+}
+function isSupabase(urlString) {
+  const s = String(urlString || "").toLowerCase();
+  return s.includes("supabase.com") || s.includes("pooler");
 }
 
-
-const pool = makePool(DATABASE_URL);
+const pool = new Pool({
+  connectionString: stripQuery(DATABASE_URL),
+  ssl: isSupabase(DATABASE_URL) ? { rejectUnauthorized: false } : undefined,
+  max: 10,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 10_000,
+});
 
 async function q(text, params = []) {
   return pool.query(text, params);
 }
 
+// --- helpers ---
+function normUsername(u) {
+  return String(u || "").trim().toLowerCase();
+}
+function validUsername(u) {
+  return /^[a-z0-9._-]{3,24}$/.test(u);
+}
+function validPassword(p) {
+  return typeof p === "string" && p.length >= 6 && p.length <= 128;
+}
+function safeText(s, max) {
+  return String(s ?? "").trim().slice(0, max);
+}
+
 async function initDb() {
+  // Users: entspricht deinem Schema, aber idempotent (crasht nie)
   await q(`
     CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
+      id BIGSERIAL PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
       pass_hash TEXT NOT NULL,
-      display_name TEXT,
+      role TEXT DEFAULT 'user',
       bio TEXT DEFAULT '',
-      avatar_url TEXT DEFAULT '',
-      is_admin BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      avatar TEXT DEFAULT '',
+      status TEXT DEFAULT 'active',
+      banned_until TIMESTAMPTZ,
+      muted_until TIMESTAMPTZ,
+      timeout_until TIMESTAMPTZ,
+      needs_password_change BOOLEAN DEFAULT FALSE,
+      admin_panel_hash TEXT,
+      admin_panel_needs_setup BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      session_version INTEGER DEFAULT 0,
+      avatar_url TEXT
     );
-
-  // --- Migrations / Kompatibilität (falls deine DB schon existiert) ---
-  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT;`);
-  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT;`);
-  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;`);
-  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';`);
-  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false;`);
-  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_mod BOOLEAN DEFAULT false;`);
-  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_support BOOLEAN DEFAULT false;`);
-
-  await q(`UPDATE users SET display_name = username WHERE display_name IS NULL;`);
   `);
 
+  // Falls Spalten fehlen (ältere Versionen), hinzufügen:
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user';`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT '';`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT DEFAULT '';`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_until TIMESTAMPTZ;`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS muted_until TIMESTAMPTZ;`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS timeout_until TIMESTAMPTZ;`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS needs_password_change BOOLEAN DEFAULT FALSE;`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 0;`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;`);
+
+  // Posts (für dein script.js Feed)
   await q(`
     CREATE TABLE IF NOT EXISTS posts (
       id BIGSERIAL PRIMARY KEY,
-      author_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       content TEXT NOT NULL,
-      is_html BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
 
   await q(`CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at DESC);`);
   await q(`CREATE INDEX IF NOT EXISTS idx_posts_author_id ON posts(author_id);`);
+
+  // Optional: Default Admin anlegen, falls keiner existiert
+  // (nur damit du überhaupt admin testen kannst)
+  const adminExists = await q(`SELECT 1 FROM users WHERE role='admin' LIMIT 1;`);
+  if (adminExists.rowCount === 0) {
+    const pass_hash = await bcrypt.hash("admin123", 12);
+    await q(
+      `INSERT INTO users (username, pass_hash, role, bio)
+       VALUES ($1,$2,'admin',$3)
+       ON CONFLICT (username) DO NOTHING;`,
+      ["admin", pass_hash, "Master Administrator (CHANGE PW)"]
+    );
+    console.log("Default admin created: admin / admin123 (change it!)");
+  }
 }
 
+// --- express app ---
 const app = express();
 app.set("trust proxy", 1);
 
@@ -122,17 +138,17 @@ app.use(
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 1000 * 60 * 60 * 24 * 14, // 14 Tage
+      secure: "auto", // wichtig auf Render
+      maxAge: 1000 * 60 * 60 * 24 * 14,
     },
-  }),
+  })
 );
 
-function safeTrim(s, max) {
-  if (typeof s !== "string") return "";
-  return s.trim().slice(0, max);
-}
+// Static aus /public
+app.use(express.static(path.join(__dirname, "public"), { extensions: ["html"] }));
+app.get("/", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
+// --- auth helpers ---
 function requireAuth(req, res, next) {
   if (!req.session?.userId) return res.status(401).json({ error: "not_logged_in" });
   next();
@@ -140,78 +156,22 @@ function requireAuth(req, res, next) {
 
 async function getMe(req) {
   if (!req.session?.userId) return null;
-  const { rows } = await q(
-    `SELECT id, username, COALESCE(display_name, username) AS display_name, bio, avatar_url, is_admin
+  const r = await q(
+    `SELECT id, username, role, bio, avatar, status, banned_until, muted_until, timeout_until
      FROM users WHERE id=$1`,
-    [req.session.userId],
+    [req.session.userId]
   );
-  return rows[0] || null;
+  return r.rows[0] || null;
 }
 
-// ---- Static ----
-app.use(express.static(path.join(__dirname, "public")));
-app.get("/", (_req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
-
-// ---- Auth ----
-app.post("/api/register", async (req, res) => {
+// --- API ---
+app.get("/api/health", async (_req, res) => {
   try {
-    const username = safeTrim(req.body.username, 24).toLowerCase();
-    const password = safeTrim(req.body.password, 200);
-
-    if (!/^[a-z0-9_.-]{3,24}$/.test(username)) {
-      return res.status(400).json({ error: "bad_username" });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ error: "password_too_short" });
-    }
-
-    const pass_hash = await bcrypt.hash(password, 10);
-
-    const { rows } = await q(
-      `INSERT INTO users (username, pass_hash, display_name)
-       VALUES ($1, $2, $1)
-       RETURNING id, username, COALESCE(display_name, username) AS display_name, bio, avatar_url, is_admin`,
-      [username, pass_hash],
-    );
-
-    req.session.userId = rows[0].id;
-    res.json({ ok: true, user: rows[0] });
-  } catch (e) {
-    if (e?.code === "23505") return res.status(409).json({ error: "username_taken" });
-    console.error("register error", e);
-    res.status(500).json({ error: "server_error" });
+    await q("SELECT 1;");
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ ok: false });
   }
-});
-
-app.post("/api/login", async (req, res) => {
-  try {
-    const username = safeTrim(req.body.username, 24).toLowerCase();
-    const password = safeTrim(req.body.password, 200);
-
-    const { rows } = await q(
-      `SELECT id, username, pass_hash, COALESCE(display_name, username) AS display_name, bio, avatar_url, is_admin
-       FROM users WHERE username=$1`,
-      [username],
-    );
-    const user = rows[0];
-    if (!user) return res.status(401).json({ error: "invalid_login" });
-
-    const ok = await bcrypt.compare(password, user.pass_hash);
-    if (!ok) return res.status(401).json({ error: "invalid_login" });
-
-    req.session.userId = user.id;
-    delete user.pass_hash;
-    res.json({ ok: true, user });
-  } catch (e) {
-    console.error("login error", e);
-    res.status(500).json({ error: "server_error" });
-  }
-});
-
-app.post("/api/logout", (req, res) => {
-  req.session?.destroy(() => res.json({ ok: true }));
 });
 
 app.get("/api/me", async (req, res) => {
@@ -224,17 +184,71 @@ app.get("/api/me", async (req, res) => {
   }
 });
 
-// ---- Profiles ----
+app.post("/api/register", async (req, res) => {
+  try {
+    const username = normUsername(req.body.username);
+    const password = String(req.body.password || "");
+    const bio = safeText(req.body.bio, 200);
+    const avatar = safeText(req.body.avatar, 300);
+
+    if (!validUsername(username)) return res.status(400).json({ error: "bad_username" });
+    if (!validPassword(password)) return res.status(400).json({ error: "bad_password" });
+
+    const pass_hash = await bcrypt.hash(password, 12);
+
+    const r = await q(
+      `INSERT INTO users (username, pass_hash, role, bio, avatar, status)
+       VALUES ($1,$2,'user',$3,$4,'active')
+       RETURNING id;`,
+      [username, pass_hash, bio, avatar]
+    );
+
+    req.session.userId = r.rows[0].id;
+    const me = await getMe(req);
+    res.json({ ok: true, user: me });
+  } catch (e) {
+    if (e?.code === "23505") return res.status(409).json({ error: "username_taken" });
+    console.error("register error", e);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
+app.post("/api/login", async (req, res) => {
+  try {
+    const username = normUsername(req.body.username);
+    const password = String(req.body.password || "");
+
+    const r = await q(`SELECT id, pass_hash FROM users WHERE username=$1 LIMIT 1;`, [username]);
+    const u = r.rows[0];
+    if (!u) return res.status(401).json({ error: "invalid_login" });
+
+    const ok = await bcrypt.compare(password, u.pass_hash);
+    if (!ok) return res.status(401).json({ error: "invalid_login" });
+
+    req.session.userId = u.id;
+    const me = await getMe(req);
+    res.json({ ok: true, user: me });
+  } catch (e) {
+    console.error("login error", e);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
+app.post("/api/logout", (req, res) => {
+  req.session?.destroy(() => res.json({ ok: true }));
+});
+
+// Profile
 app.get("/api/profile/:username", async (req, res) => {
   try {
-    const username = safeTrim(req.params.username, 24).toLowerCase();
-    const { rows } = await q(
-      `SELECT username, COALESCE(display_name, username) AS display_name, bio, avatar_url, is_admin, created_at
-       FROM users WHERE username=$1`,
-      [username],
+    const username = normUsername(req.params.username);
+    const r = await q(
+      `SELECT username, role, bio, avatar, status, created_at
+       FROM users WHERE username=$1 LIMIT 1;`,
+      [username]
     );
-    if (!rows[0]) return res.status(404).json({ error: "not_found" });
-    res.json({ ok: true, profile: rows[0] });
+    if (!r.rows[0]) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true, profile: r.rows[0] });
   } catch (e) {
     console.error("profile get error", e);
     res.status(500).json({ error: "server_error" });
@@ -243,15 +257,13 @@ app.get("/api/profile/:username", async (req, res) => {
 
 app.post("/api/profile", requireAuth, async (req, res) => {
   try {
-    const display_name = safeTrim(req.body.displayName ?? req.body.display_name ?? "", 40);
-    const bio = safeTrim(req.body.bio ?? "", 280);
-    const avatar_url = safeTrim(req.body.avatarUrl ?? req.body.avatar_url ?? "", 300);
+    const bio = safeText(req.body.bio, 200);
+    const avatar = safeText(req.body.avatar, 300);
 
-    await q(`UPDATE users SET display_name=$1, bio=$2, avatar_url=$3 WHERE id=$4`, [
-      display_name || null,
+    await q(`UPDATE users SET bio=$1, avatar=$2 WHERE id=$3;`, [
       bio,
-      avatar_url,
-      req.session.userId,
+      avatar,
+      req.session.userId
     ]);
 
     const me = await getMe(req);
@@ -264,18 +276,22 @@ app.post("/api/profile", requireAuth, async (req, res) => {
 
 app.post("/api/profile/password", requireAuth, async (req, res) => {
   try {
-    const oldPassword = safeTrim(req.body.oldPassword ?? "", 200);
-    const newPassword = safeTrim(req.body.newPassword ?? "", 200);
-    if (newPassword.length < 6) return res.status(400).json({ error: "password_too_short" });
+    const oldPassword = String(req.body.oldPassword || "");
+    const newPassword = String(req.body.newPassword || "");
 
-    const { rows } = await q(`SELECT pass_hash FROM users WHERE id=$1`, [req.session.userId]);
-    if (!rows[0]) return res.status(401).json({ error: "not_logged_in" });
+    if (!validPassword(newPassword)) return res.status(400).json({ error: "bad_password" });
 
-    const ok = await bcrypt.compare(oldPassword, rows[0].pass_hash);
+    const r = await q(`SELECT pass_hash FROM users WHERE id=$1;`, [req.session.userId]);
+    if (!r.rows[0]) return res.status(401).json({ error: "not_logged_in" });
+
+    const ok = await bcrypt.compare(oldPassword, r.rows[0].pass_hash);
     if (!ok) return res.status(401).json({ error: "wrong_password" });
 
-    const pass_hash = await bcrypt.hash(newPassword, 10);
-    await q(`UPDATE users SET pass_hash=$1 WHERE id=$2`, [pass_hash, req.session.userId]);
+    const pass_hash = await bcrypt.hash(newPassword, 12);
+    await q(`UPDATE users SET pass_hash=$1, session_version=session_version+1 WHERE id=$2;`, [
+      pass_hash,
+      req.session.userId
+    ]);
 
     res.json({ ok: true });
   } catch (e) {
@@ -284,75 +300,39 @@ app.post("/api/profile/password", requireAuth, async (req, res) => {
   }
 });
 
-// ---- Posts ----
-app.get("/api/posts", async (req, res) => {
+// Posts
+app.get("/api/posts", async (_req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
-
-    const { rows } = await q(
-      `SELECT p.id,
-              p.title,
-              p.content,
-              p.is_html,
-              to_char(p.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+    const r = await q(
+      `SELECT p.id, p.title, p.content, p.created_at,
               u.username AS author
        FROM posts p
        JOIN users u ON u.id=p.author_id
        ORDER BY p.created_at DESC
-       LIMIT $1`,
-      [limit],
+       LIMIT 200;`
     );
 
-    res.json({ ok: true, posts: rows });
+    // script.js erwartet created_at als string, das passt so.
+    res.json({ ok: true, posts: r.rows });
   } catch (e) {
     console.error("posts list error", e);
     res.status(500).json({ error: "server_error" });
   }
 });
 
-app.get("/api/posts/trending", async (_req, res) => {
-  try {
-    const { rows } = await q(
-      `SELECT p.id,
-              p.title,
-              p.content,
-              p.is_html,
-              to_char(p.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
-              u.username AS author
-       FROM posts p
-       JOIN users u ON u.id=p.author_id
-       ORDER BY p.created_at DESC
-       LIMIT 10`,
-    );
-
-    res.json({ ok: true, posts: rows });
-  } catch (e) {
-    console.error("posts trending error", e);
-    res.status(500).json({ error: "server_error" });
-  }
-});
-
 app.post("/api/posts", requireAuth, async (req, res) => {
   try {
-    const me = await getMe(req);
-    if (!me) return res.status(401).json({ error: "not_logged_in" });
-
-    const title = safeTrim(req.body.title ?? "", 80);
-    const content = safeTrim(req.body.content ?? "", 4000);
+    const title = safeText(req.body.title, 80);
+    const content = safeText(req.body.content, 4000);
     if (!title || !content) return res.status(400).json({ error: "missing_fields" });
 
-    // Admin darf HTML senden (Flag). Alle anderen: immer plain text.
-    const wantHtml = !!req.body.isHtml || !!req.body.is_html;
-    const is_html = me.is_admin ? wantHtml : false;
-
-    const { rows } = await q(
-      `INSERT INTO posts (author_id, title, content, is_html)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id`,
-      [me.id, title, content, is_html],
+    await q(
+      `INSERT INTO posts (author_id, title, content)
+       VALUES ($1,$2,$3);`,
+      [req.session.userId, title, content]
     );
 
-    res.json({ ok: true, id: rows[0].id });
+    res.json({ ok: true });
   } catch (e) {
     console.error("post create error", e);
     res.status(500).json({ error: "server_error" });
@@ -361,15 +341,17 @@ app.post("/api/posts", requireAuth, async (req, res) => {
 
 app.delete("/api/posts/:id", requireAuth, async (req, res) => {
   try {
-    const me = await getMe(req);
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "bad_id" });
 
-    const { rows } = await q(`SELECT author_id FROM posts WHERE id=$1`, [id]);
-    if (!rows[0]) return res.status(404).json({ error: "not_found" });
+    const me = await getMe(req);
+    if (!me) return res.status(401).json({ error: "not_logged_in" });
 
-    const isOwner = rows[0].author_id === me.id;
-    if (!isOwner && !me.is_admin) return res.status(403).json({ error: "forbidden" });
+    const r = await q(`SELECT author_id FROM posts WHERE id=$1`, [id]);
+    if (!r.rows[0]) return res.status(404).json({ error: "not_found" });
+
+    const isOwner = Number(r.rows[0].author_id) === Number(me.id);
+    if (!isOwner && me.role !== "admin") return res.status(403).json({ error: "forbidden" });
 
     await q(`DELETE FROM posts WHERE id=$1`, [id]);
     res.json({ ok: true });
@@ -379,13 +361,13 @@ app.delete("/api/posts/:id", requireAuth, async (req, res) => {
   }
 });
 
-// ---- Admin ----
+// Admin: alle Posts löschen (für deinen "btn-admin")
 app.delete("/api/admin/posts", requireAuth, async (req, res) => {
   try {
     const me = await getMe(req);
-    if (!me?.is_admin) return res.status(403).json({ error: "forbidden" });
+    if (!me || me.role !== "admin") return res.status(403).json({ error: "forbidden" });
 
-    await q(`DELETE FROM posts`);
+    await q(`DELETE FROM posts;`);
     res.json({ ok: true });
   } catch (e) {
     console.error("admin wipe error", e);
@@ -393,16 +375,8 @@ app.delete("/api/admin/posts", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/health", async (_req, res) => {
-  try {
-    await q("SELECT 1");
-    res.json({ ok: true });
-  } catch {
-    res.status(500).json({ ok: false });
-  }
-});
-
-const server = app.listen(PORT, async () => {
+// Start
+app.listen(PORT, async () => {
   try {
     await initDb();
     console.log(`Chatly listening on :${PORT}`);
@@ -410,12 +384,4 @@ const server = app.listen(PORT, async () => {
     console.error("DB init failed:", e);
     process.exit(1);
   }
-});
-
-process.on("SIGTERM", async () => {
-  server.close(() => {});
-  try {
-    await pool.end();
-  } catch {}
-  process.exit(0);
 });
