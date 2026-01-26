@@ -144,3 +144,24 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log("Chatly running on port", PORT);
 });
+
+// --- PATCH: auth/me alias ---
+app.get("/api/auth/me", (req, res) => {
+  if (!req.session.user) return res.status(401).json({});
+  res.json({ user: req.session.user });
+});
+
+// --- PATCH: rooms/list ---
+app.get("/api/rooms/list", requireLogin, async (req, res) => {
+  const user = req.session.user;
+  const rows = user.role === "admin"
+    ? await q("SELECT * FROM rooms ORDER BY id")
+    : await q("SELECT * FROM rooms WHERE admin_only=false ORDER BY id");
+  res.json({ rooms: rows });
+});
+
+// --- PATCH: rooms/trending ---
+app.get("/api/rooms/trending", requireLogin, async (req, res) => {
+  const rows = await q("SELECT * FROM rooms ORDER BY id DESC LIMIT 10");
+  res.json({ rooms: rows });
+});
