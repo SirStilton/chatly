@@ -1,15 +1,16 @@
 {
-  "name": "chatly",
+  "name": "nexus-blog",
   "version": "1.0.0",
   "type": "module",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "socket.io": "^4.7.5",
-    "pg": "^8.11.5",
     "bcryptjs": "^2.4.3",
-    "express-session": "^1.17.3"
+    "better-sqlite3": "^11.1.2",
+    "express": "^4.19.2",
+    "express-session": "^1.17.3",
+    "ws": "^8.19.0"
   }
 }
