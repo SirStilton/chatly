@@ -1,4 +1,4 @@
-app.set("trust proxy", 1);
+
 
 // Chatly FINAL server.js
 // Node 18+, Express + Socket.IO + Supabase Postgres
@@ -12,6 +12,8 @@ import pg from "pg";
 const { Pool } = pg;
 
 const app = express();
+
+app.set("trust proxy", 1);
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: true, credentials: true }
