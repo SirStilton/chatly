@@ -1,3 +1,5 @@
+app.set("trust proxy", 1);
+
 // Chatly FINAL server.js
 // Node 18+, Express + Socket.IO + Supabase Postgres
 import express from "express";
@@ -164,4 +166,22 @@ app.get("/api/rooms/list", requireLogin, async (req, res) => {
 app.get("/api/rooms/trending", requireLogin, async (req, res) => {
   const rows = await q("SELECT * FROM rooms ORDER BY id DESC LIMIT 10");
   res.json({ rooms: rows });
+});
+
+
+// --- PATCH: rooms join ---
+app.post("/api/rooms/join", requireLogin, async (req, res) => {
+  const { roomId } = req.body;
+  const userId = req.session.user.id;
+
+  try {
+    await q(
+      "INSERT INTO room_members(room_id, user_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+      [roomId, userId]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "join failed" });
+  }
 });
