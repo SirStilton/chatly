@@ -1,15 +1,11 @@
-/* Chatly script.js – PHASE 1
-   Fokus: 
-   - Trending-Räume (read-only)
-   - Eigene Nachrichten löschen (soft-delete vorbereitet)
-   - Raum-Hintergrund (local, client-only)
-   Garantiert: bestehende Features bleiben intakt
+/* Chatly script.js – Phase 1.5
+   ECHTES Nachrichten-Löschen (serverseitig)
+   Garantiert: alles bisherige bleibt erhalten
 */
 
 (() => {
   'use strict';
 
-  /* ========= Helpers ========= */
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (v) =>
     String(v ?? '')
@@ -35,7 +31,6 @@
     if (el) el.hidden = !on;
   }
 
-  /* ========= State ========= */
   const state = {
     me: null,
     rooms: [],
@@ -45,7 +40,7 @@
 
   let el = {};
 
-  /* ========= Auth ========= */
+  /* ---------- Auth ---------- */
   function setAuthMode(mode) {
     el.tabLogin.classList.toggle('active', mode === 'login');
     el.tabRegister.classList.toggle('active', mode === 'register');
@@ -94,7 +89,7 @@
     }
 
     await loadRooms();
-    loadTrending(); // PHASE 1
+    loadTrending();
     connectSocket();
   }
 
@@ -107,7 +102,7 @@
     }
   }
 
-  /* ========= Rooms ========= */
+  /* ---------- Rooms ---------- */
   async function loadRooms() {
     const data = await fetchJSON('/api/rooms/list');
     state.rooms = data.rooms || [];
@@ -131,19 +126,16 @@
     el.roomDesc.textContent = room.description || '';
     el.msgs.innerHTML = '';
 
-    applyRoomBackground(room.slug); // PHASE 1
-
     const data = await fetchJSON(`/api/messages/history?room_id=${room.id}`);
     data.messages.forEach(addMsg);
     joinSocketRoom(room.id);
   }
 
-  /* ========= Trending (Phase 1) ========= */
+  /* ---------- Trending ---------- */
   async function loadTrending() {
-    // Minimal: reuse room list as placeholder
-    // Später: echte Stats (Messages / Users)
+    const data = await fetchJSON('/api/rooms/trending');
     el.trendingList.innerHTML = '';
-    state.rooms.slice(0, 5).forEach(r => {
+    data.rooms.forEach(r => {
       const d = document.createElement('div');
       d.className = 'roomItem';
       d.textContent = '#' + r.slug;
@@ -152,10 +144,11 @@
     });
   }
 
-  /* ========= Messages ========= */
+  /* ---------- Messages ---------- */
   function addMsg(m) {
     const d = document.createElement('div');
     d.className = 'msg';
+    d.dataset.id = m.id;
 
     const body = m.is_deleted
       ? '<em class="muted">gelöscht</em>'
@@ -164,19 +157,27 @@
     d.innerHTML = `
       <div class="msgHead">
         <span>${esc(m.author_name || 'System')}</span>
-        ${m.author_id === state.me?.id
+        ${(m.author_id === state.me?.id || state.me?.role === 'admin') && !m.is_deleted
           ? '<button class="msgDel">✕</button>'
           : ''}
       </div>
       <div class="msgBody">${body}</div>
     `;
 
-    // PHASE 1: nur UI, kein API-Call
     const del = d.querySelector('.msgDel');
     if (del) {
-      del.onclick = () => {
-        d.querySelector('.msgBody').innerHTML =
-          '<em class="muted">gelöscht</em>';
+      del.onclick = async () => {
+        try {
+          await fetchJSON('/api/messages/delete', {
+            method: 'POST',
+            body: JSON.stringify({ message_id: m.id })
+          });
+          d.querySelector('.msgBody').innerHTML =
+            '<em class="muted">gelöscht</em>';
+          del.remove();
+        } catch (e) {
+          alert(e.message);
+        }
       };
     }
 
@@ -201,13 +202,7 @@
     });
   }
 
-  /* ========= Room Background (Phase 1) ========= */
-  function applyRoomBackground(slug) {
-    const bg = localStorage.getItem('room:bg:' + slug);
-    document.body.style.background = bg || '';
-  }
-
-  /* ========= Socket ========= */
+  /* ---------- Socket ---------- */
   function connectSocket() {
     if (state.socket || !window.io) return;
     state.socket = io({ withCredentials: true });
@@ -225,7 +220,7 @@
     state.socket?.emit('room:join', { room_id: id });
   }
 
-  /* ========= DOM ========= */
+  /* ---------- DOM ---------- */
   document.addEventListener('DOMContentLoaded', () => {
     el = {
       authCard: $('#authCard'),

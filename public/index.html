@@ -25,7 +25,6 @@
 
 <main class="wrap">
 
-  <!-- AUTH -->
   <section id="authCard" class="card">
     <div class="cardHead">
       <div class="tabs">
@@ -55,11 +54,9 @@
     </form>
   </section>
 
-  <!-- APP -->
   <section id="appCard" class="card" hidden>
     <div class="appShell">
 
-      <!-- SIDEBAR -->
       <aside class="sidebar">
         <div class="sideBlock">
           <div class="sideTitle">Räume</div>
@@ -72,7 +69,6 @@
         </div>
       </aside>
 
-      <!-- CHAT -->
       <section class="chatPane">
         <div class="chatHead">
           <div>
@@ -97,25 +93,6 @@
     </div>
   </section>
 </main>
-
-<!-- ADMIN PANEL -->
-<div id="adminOverlay" class="overlay" hidden>
-  <div class="card adminCard">
-    <h2>Admin Panel</h2>
-
-    <div class="adminSection">
-      <h3>User Moderation</h3>
-      <input id="adminUserSearch" placeholder="Username…" />
-      <div class="row">
-        <button id="btnAdminBan" class="btn danger">Ban</button>
-        <button id="btnAdminMute" class="btn ghost">Mute</button>
-        <button id="btnAdminTimeout" class="btn ghost">Timeout</button>
-      </div>
-    </div>
-
-    <button id="btnAdminClose" class="btn ghost">Schließen</button>
-  </div>
-</div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="/script.js"></script>

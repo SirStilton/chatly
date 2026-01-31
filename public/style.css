@@ -1,10 +1,4 @@
-/* Chatly style.css – Phase 1
-   Ziel:
-   - Liquid-Glass Look
-   - Grünes, futuristisches Design
-   - Nichts kaputt machen
-   - Nur Ergänzungen & leichte Verbesserungen
-*/
+/* Chatly style.css – FINAL (patched, nicht ersetzt) */
 
 :root {
   --bg: #0b1210;
@@ -42,6 +36,9 @@ body {
   backdrop-filter: var(--blur);
   background: var(--panel);
   border-bottom: 1px solid var(--panel-border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .brand {
@@ -77,10 +74,15 @@ body {
   border-radius: 10px;
   cursor: pointer;
   backdrop-filter: var(--blur);
+  transition: background 0.15s ease, transform 0.05s ease;
 }
 
 .btn:hover {
   background: var(--accent-soft);
+}
+
+.btn:active {
+  transform: translateY(1px);
 }
 
 .btn.primary {
@@ -182,6 +184,19 @@ body {
   padding: 10px 12px;
   background: rgba(0, 0, 0, 0.25);
   border-radius: 12px;
+  border: 1px solid transparent;
+}
+
+.msg.me {
+  border-color: var(--accent-soft);
+}
+
+.msg.bot {
+  background: rgba(45, 255, 156, 0.08);
+}
+
+.msg.system {
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .msgHead {
