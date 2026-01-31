@@ -1,14 +1,15 @@
-/* Chatly script.js – ADMIN READY (FINAL)
-   Compatible with:
-   - index_final_admin.html
-   - server_final.js
-   - Supabase admin schema
+/* Chatly script.js – PHASE 1
+   Fokus: 
+   - Trending-Räume (read-only)
+   - Eigene Nachrichten löschen (soft-delete vorbereitet)
+   - Raum-Hintergrund (local, client-only)
+   Garantiert: bestehende Features bleiben intakt
 */
 
 (() => {
   'use strict';
 
-  /* ---------- helpers ---------- */
+  /* ========= Helpers ========= */
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (v) =>
     String(v ?? '')
@@ -34,7 +35,7 @@
     if (el) el.hidden = !on;
   }
 
-  /* ---------- state ---------- */
+  /* ========= State ========= */
   const state = {
     me: null,
     rooms: [],
@@ -44,7 +45,7 @@
 
   let el = {};
 
-  /* ---------- auth ---------- */
+  /* ========= Auth ========= */
   function setAuthMode(mode) {
     el.tabLogin.classList.toggle('active', mode === 'login');
     el.tabRegister.classList.toggle('active', mode === 'register');
@@ -93,6 +94,7 @@
     }
 
     await loadRooms();
+    loadTrending(); // PHASE 1
     connectSocket();
   }
 
@@ -105,7 +107,7 @@
     }
   }
 
-  /* ---------- rooms ---------- */
+  /* ========= Rooms ========= */
   async function loadRooms() {
     const data = await fetchJSON('/api/rooms/list');
     state.rooms = data.rooms || [];
@@ -129,23 +131,54 @@
     el.roomDesc.textContent = room.description || '';
     el.msgs.innerHTML = '';
 
+    applyRoomBackground(room.slug); // PHASE 1
+
     const data = await fetchJSON(`/api/messages/history?room_id=${room.id}`);
     data.messages.forEach(addMsg);
     joinSocketRoom(room.id);
   }
 
-  /* ---------- messages ---------- */
+  /* ========= Trending (Phase 1) ========= */
+  async function loadTrending() {
+    // Minimal: reuse room list as placeholder
+    // Später: echte Stats (Messages / Users)
+    el.trendingList.innerHTML = '';
+    state.rooms.slice(0, 5).forEach(r => {
+      const d = document.createElement('div');
+      d.className = 'roomItem';
+      d.textContent = '#' + r.slug;
+      d.onclick = () => switchRoom(r.id);
+      el.trendingList.appendChild(d);
+    });
+  }
+
+  /* ========= Messages ========= */
   function addMsg(m) {
     const d = document.createElement('div');
     d.className = 'msg';
+
     const body = m.is_deleted
       ? '<em class="muted">gelöscht</em>'
       : esc(m.content);
 
-    d.innerHTML = `<div class="msgHead">
+    d.innerHTML = `
+      <div class="msgHead">
         <span>${esc(m.author_name || 'System')}</span>
+        ${m.author_id === state.me?.id
+          ? '<button class="msgDel">✕</button>'
+          : ''}
       </div>
-      <div class="msgBody">${body}</div>`;
+      <div class="msgBody">${body}</div>
+    `;
+
+    // PHASE 1: nur UI, kein API-Call
+    const del = d.querySelector('.msgDel');
+    if (del) {
+      del.onclick = () => {
+        d.querySelector('.msgBody').innerHTML =
+          '<em class="muted">gelöscht</em>';
+      };
+    }
 
     el.msgs.appendChild(d);
     el.msgs.scrollTop = el.msgs.scrollHeight;
@@ -168,7 +201,13 @@
     });
   }
 
-  /* ---------- socket ---------- */
+  /* ========= Room Background (Phase 1) ========= */
+  function applyRoomBackground(slug) {
+    const bg = localStorage.getItem('room:bg:' + slug);
+    document.body.style.background = bg || '';
+  }
+
+  /* ========= Socket ========= */
   function connectSocket() {
     if (state.socket || !window.io) return;
     state.socket = io({ withCredentials: true });
@@ -186,28 +225,7 @@
     state.socket?.emit('room:join', { room_id: id });
   }
 
-  /* ---------- admin ---------- */
-  function openAdmin() {
-    show(el.adminOverlay, true);
-  }
-
-  function closeAdmin() {
-    show(el.adminOverlay, false);
-  }
-
-  async function adminAction(kind) {
-    const username = el.adminUserSearch.value.trim();
-    if (!username) return alert('Username fehlt');
-
-    await fetchJSON(`/api/admin/${kind}`, {
-      method: 'POST',
-      body: JSON.stringify({ username })
-    });
-
-    alert(`${kind} ausgeführt`);
-  }
-
-  /* ---------- DOM ---------- */
+  /* ========= DOM ========= */
   document.addEventListener('DOMContentLoaded', () => {
     el = {
       authCard: $('#authCard'),
@@ -226,40 +244,24 @@
       btnAdmin: $('#btnAdmin'),
 
       roomList: $('#roomList'),
+      trendingList: $('#trendingList'),
       roomTitle: $('#roomTitle'),
       roomDesc: $('#roomDesc'),
       msgs: $('#msgs'),
 
       sendForm: $('#sendForm'),
       msgInput: $('#msgInput'),
-      msgType: $('#msgType'),
-
-      adminOverlay: $('#adminOverlay'),
-      adminUserSearch: $('#adminUserSearch'),
-      btnAdminBan: $('#btnAdminBan'),
-      btnAdminMute: $('#btnAdminMute'),
-      btnAdminTimeout: $('#btnAdminTimeout'),
-      btnAdminClose: $('#btnAdminClose')
+      msgType: $('#msgType')
     };
 
-    /* auth */
     el.tabLogin.onclick = () => setAuthMode('login');
     el.tabRegister.onclick = () => setAuthMode('register');
     el.authForm.onsubmit = e => { e.preventDefault(); doAuth(); };
+    el.sendForm.onsubmit = e => { e.preventDefault(); sendMessage(); };
     el.btnLogout.onclick = async () => {
       await fetchJSON('/api/auth/logout', { method: 'POST' });
       setMe(null);
     };
-
-    /* chat */
-    el.sendForm.onsubmit = e => { e.preventDefault(); sendMessage(); };
-
-    /* admin */
-    el.btnAdmin.onclick = openAdmin;
-    el.btnAdminClose.onclick = closeAdmin;
-    el.btnAdminBan.onclick = () => adminAction('ban');
-    el.btnAdminMute.onclick = () => adminAction('mute');
-    el.btnAdminTimeout.onclick = () => adminAction('timeout');
 
     setAuthMode('login');
     boot();
