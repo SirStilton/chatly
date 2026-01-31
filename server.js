@@ -1,5 +1,5 @@
-// Chatly server.js – FINAL
-// Garantiert passend zu index.html & script.js
+// Chatly server.js – FINAL (Automod + Render + Supabase)
+// Node >=18, ESM
 
 import express from 'express';
 import http from 'http';
@@ -10,24 +10,60 @@ import { Server } from 'socket.io';
 
 const { Pool } = pg;
 
+/* =========================
+   App & Server
+========================= */
 const app = express();
+app.set('trust proxy', process.env.TRUST_PROXY === '1');
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: true, credentials: true }
 });
 
-/* ================= DB ================= */
+/* =========================
+   Database (Supabase)
+========================= */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  max: 5
 });
 
-const q = async (text, params = []) => {
+async function q(text, params = []) {
   const { rows } = await pool.query(text, params);
   return rows;
+}
+
+/* =========================
+   AutoMod
+========================= */
+const AUTOMOD = {
+  maxMsgs10s: Number(process.env.AUTOMOD_MAX_MSGS_10S || 6),
+  spam: process.env.AUTOMOD_ENABLE_SPAM === 'true',
+  badwords: process.env.AUTOMOD_ENABLE_BADWORDS === 'true'
 };
 
-/* ============== Middleware ============== */
+const msgBuckets = new Map(); // userId -> timestamps[]
+const BADWORDS = ['hurensohn', 'arschloch', 'fotze'];
+
+function isSpam(userId) {
+  const now = Date.now();
+  const bucket = msgBuckets.get(userId) || [];
+  const recent = bucket.filter(t => now - t < 10_000);
+  recent.push(now);
+  msgBuckets.set(userId, recent);
+  return recent.length > AUTOMOD.maxMsgs10s;
+}
+
+function hasBadword(text) {
+  const t = text.toLowerCase();
+  return BADWORDS.some(w => t.includes(w));
+}
+
+/* =========================
+   Middleware
+========================= */
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -39,40 +75,64 @@ app.use(session({
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production'
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 1000 * 60 * 60 * 24
   }
 }));
 
-/* ============== Guards ============== */
+/* =========================
+   Guards
+========================= */
 async function requireLogin(req, res, next) {
   if (!req.session.user) {
     return res.status(401).json({ error: 'not logged in' });
   }
 
   const [u] = await q(
-    'SELECT banned_until FROM users WHERE id=$1',
+    'SELECT banned_until, muted_until, timeout_until FROM users WHERE id=$1',
     [req.session.user.id]
   );
 
-  if (u?.banned_until && new Date(u.banned_until) > new Date()) {
+  const now = new Date();
+  if (u?.banned_until && new Date(u.banned_until) > now) {
     return res.status(403).json({ error: 'banned' });
+  }
+  if (u?.timeout_until && new Date(u.timeout_until) > now) {
+    return res.status(403).json({ error: 'timeout' });
   }
 
   next();
 }
 
-/* ============== Auth ============== */
+function requireAdmin(req, res, next) {
+  if (req.session.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'admin only' });
+  }
+  next();
+}
+
+/* =========================
+   Auth
+========================= */
 app.post('/api/auth/register', async (req, res) => {
   const { username, password } = req.body;
+
+  if (!username || !password) return res.status(400).json({ error: 'missing' });
+  if (username.length > 10) return res.status(400).json({ error: 'username too long' });
+  if (password.length < 6) return res.status(400).json({ error: 'password too short' });
+
   const hash = await bcrypt.hash(password, 10);
 
-  const [u] = await q(
-    'INSERT INTO users (username, pass_hash) VALUES ($1,$2) RETURNING id, username, role',
-    [username, hash]
-  );
-
-  req.session.user = u;
-  res.json({ user: u });
+  try {
+    const [u] = await q(
+      'INSERT INTO users (username, pass_hash) VALUES ($1,$2) RETURNING id, username, role',
+      [username, hash]
+    );
+    req.session.user = u;
+    res.json({ user: u });
+  } catch {
+    res.status(400).json({ error: 'username exists' });
+  }
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -96,53 +156,44 @@ app.get('/api/auth/me', (req, res) => {
   res.json({ user: req.session.user });
 });
 
-/* ============== Rooms ============== */
+/* =========================
+   Rooms
+========================= */
 app.get('/api/rooms/list', requireLogin, async (req, res) => {
-  const rows =
-    req.session.user.role === 'admin'
-      ? await q('SELECT * FROM rooms ORDER BY id')
-      : await q(
-          "SELECT * FROM rooms WHERE admin_only=false AND visibility='public' ORDER BY id"
-        );
-
+  const isAdmin = req.session.user.role === 'admin';
+  const rows = isAdmin
+    ? await q('SELECT * FROM rooms ORDER BY id')
+    : await q("SELECT * FROM rooms WHERE admin_only=false AND visibility='public' ORDER BY id");
   res.json({ rooms: rows });
 });
 
-app.get('/api/rooms/trending', requireLogin, async (req, res) => {
-  const rows = await q(`
-    SELECT r.id, r.slug, COUNT(m.id) AS messages
-    FROM rooms r
-    LEFT JOIN messages m ON m.room_id=r.id AND m.is_deleted=false
-    WHERE r.admin_only=false AND r.visibility='public'
-    GROUP BY r.id
-    ORDER BY messages DESC
-    LIMIT 10
-  `);
-
-  res.json({ rooms: rows });
-});
-
-/* ============== Messages ============== */
-app.get('/api/messages/history', requireLogin, async (req, res) => {
-  const rows = await q(
-    `SELECT m.*, u.username AS author_name
-     FROM messages m
-     LEFT JOIN users u ON u.id=m.author_id
-     WHERE m.room_id=$1
-     ORDER BY m.id`,
-    [req.query.room_id]
-  );
-
-  res.json({ messages: rows });
-});
-
+/* =========================
+   Messages
+========================= */
 app.post('/api/messages/send', requireLogin, async (req, res) => {
-  const { room_id, content, type = 'text' } = req.body;
+  const { room_id, content } = req.body;
+  const userId = req.session.user.id;
+
+  if (!content || content.length > 100) {
+    return res.status(400).json({ error: 'invalid message' });
+  }
+
+  if (AUTOMOD.spam && isSpam(userId)) {
+    await q(
+      `UPDATE users SET timeout_until = now() + interval '2 minutes' WHERE id=$1`,
+      [userId]
+    );
+    return res.status(429).json({ error: 'spam detected' });
+  }
+
+  if (AUTOMOD.badwords && hasBadword(content)) {
+    return res.status(400).json({ error: 'badword detected' });
+  }
 
   const [msg] = await q(
     `INSERT INTO messages (room_id, author_id, content, type)
-     VALUES ($1,$2,$3,$4) RETURNING *`,
-    [room_id, req.session.user.id, content, type]
+     VALUES ($1,$2,$3,'text') RETURNING *`,
+    [room_id, userId, content]
   );
 
   msg.author_name = req.session.user.username;
@@ -150,36 +201,41 @@ app.post('/api/messages/send', requireLogin, async (req, res) => {
   res.json({ message: msg });
 });
 
-app.post('/api/messages/delete', requireLogin, async (req, res) => {
-  const { message_id } = req.body;
+/* =========================
+   Admin
+========================= */
+app.post('/api/admin/ban', requireLogin, requireAdmin, async (req, res) => {
+  const { username } = req.body;
+  const [u] = await q('SELECT id FROM users WHERE username=$1', [username]);
+  if (!u) return res.status(404).json({ error: 'not found' });
 
-  const [m] = await q(
-    'SELECT author_id FROM messages WHERE id=$1',
-    [message_id]
+  await q(
+    `UPDATE users SET banned_until = now() + interval '7 days' WHERE id=$1`,
+    [u.id]
   );
 
-  if (!m) return res.status(404).json({ error: 'not found' });
+  await q(
+    `INSERT INTO moderation_logs (admin_id, action, target_user)
+     VALUES ($1,'ban',$2)`,
+    [req.session.user.id, u.id]
+  );
 
-  if (
-    m.author_id !== req.session.user.id &&
-    req.session.user.role !== 'admin'
-  ) {
-    return res.status(403).json({ error: 'not allowed' });
-  }
-
-  await q('UPDATE messages SET is_deleted=true WHERE id=$1', [message_id]);
   res.json({ ok: true });
 });
 
-/* ============== Socket ============== */
+/* =========================
+   Socket.IO
+========================= */
 io.on('connection', socket => {
   socket.on('room:join', ({ room_id }) => {
     socket.join('room:' + room_id);
   });
 });
 
-/* ============== Start ============== */
-const PORT = process.env.PORT || 3000;
+/* =========================
+   Start
+========================= */
+const PORT = Number(process.env.PORT) || 3000;
 server.listen(PORT, () => {
   console.log('Chatly running on port', PORT);
 });
