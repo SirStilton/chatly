@@ -7,85 +7,126 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="dot"></div>
-      <div>
-        <div class="brandName">Chatly</div>
-        <div class="brandTag">grün · transparent · realtime</div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="dot"></div>
+    <div>
+      <div class="brandName">Chatly</div>
+      <div class="brandTag">grün · transparent · realtime</div>
+    </div>
+  </div>
+  <div class="topActions">
+    <span id="mePill" class="pill">nicht angemeldet</span>
+    <button id="btnAdmin" class="btn danger" hidden>Admin</button>
+    <button id="btnLogout" class="btn" hidden>Logout</button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- AUTH -->
+  <section id="authCard" class="card">
+    <div class="cardHead">
+      <div class="tabs">
+        <button id="tabLogin" class="tab active">Login</button>
+        <button id="tabRegister" class="tab">Registrieren</button>
+      </div>
+      <div class="muted small">Ohne E-Mail · Username max. 10 Zeichen</div>
+    </div>
+
+    <form id="authForm" class="grid2" data-mode="login">
+      <label class="field">
+        <span>Username</span>
+        <input id="username" maxlength="10" required />
+      </label>
+      <label class="field">
+        <span>Passwort</span>
+        <input id="password" type="password" minlength="6" required />
+      </label>
+      <div class="row">
+        <label class="check">
+          <input id="agreeRules" type="checkbox" required />
+          <span>Ich akzeptiere die Regeln</span>
+        </label>
+        <button id="btnAuth" class="btn primary" type="submit">Login</button>
+      </div>
+      <div id="authMsg" class="note"></div>
+    </form>
+  </section>
+
+  <!-- APP -->
+  <section id="appCard" class="card" hidden>
+    <div class="appShell">
+
+      <!-- SIDEBAR -->
+      <aside class="sidebar">
+        <div class="sideBlock">
+          <div class="sideTitle">Räume</div>
+          <div id="roomList" class="roomList"></div>
+          <button id="btnCreateRoom" class="btn small wide">+ Raum erstellen</button>
+        </div>
+
+        <div class="sideBlock">
+          <div class="sideTitle">Trending</div>
+          <div id="trendingList" class="roomList compact"></div>
+        </div>
+      </aside>
+
+      <!-- CHAT -->
+      <section class="chatPane">
+        <div class="chatHead">
+          <div>
+            <div id="roomTitle" class="chatTitle">—</div>
+            <div id="roomDesc" class="chatDesc"></div>
+          </div>
+          <div class="chatHeadActions">
+            <button id="btnLeaveRoom" class="btn ghost small">Verlassen</button>
+          </div>
+        </div>
+
+        <div id="msgs" class="msgs"></div>
+
+        <form id="sendForm" class="sendBar">
+          <select id="msgType" class="select">
+            <option value="text">Text</option>
+            <option value="system">System</option>
+            <option value="bot">Bot</option>
+          </select>
+          <input id="msgInput" class="input" maxlength="100" placeholder="Nachricht…" />
+          <button class="btn primary" type="submit">Senden</button>
+        </form>
+      </section>
+
+    </div>
+  </section>
+</main>
+
+<!-- ADMIN PANEL -->
+<div id="adminOverlay" class="overlay" hidden>
+  <div class="card adminCard">
+    <h2>Admin Panel</h2>
+
+    <div class="adminSection">
+      <h3>User Moderation</h3>
+      <input id="adminUserSearch" placeholder="Username…" />
+      <div class="row">
+        <button id="btnAdminBan" class="btn danger">Ban</button>
+        <button id="btnAdminMute" class="btn ghost">Mute</button>
+        <button id="btnAdminTimeout" class="btn ghost">Timeout</button>
       </div>
     </div>
-    <div class="topActions">
-      <span id="mePill" class="pill">nicht angemeldet</span>
-      <button id="btnAdmin" class="btn ghost" hidden>Admin</button>
-      <button id="btnLogout" class="btn" hidden>Logout</button>
+
+    <div class="adminSection">
+      <h3>System</h3>
+      <button id="btnSystemMsg" class="btn primary">System Nachricht</button>
     </div>
-  </header>
 
-  <main class="wrap">
-    <section id="authCard" class="card">
-      <div class="cardHead">
-        <div class="tabs">
-          <button id="tabLogin" class="tab active">Login</button>
-          <button id="tabRegister" class="tab">Registrieren</button>
-        </div>
-        <div class="muted small">Ohne E-Mail. Username max. 10 Zeichen.</div>
-      </div>
+    <button id="btnAdminClose" class="btn ghost">Schließen</button>
+  </div>
+</div>
 
-      <form id="authForm" class="grid2" data-mode="login">
-        <label class="field">
-          <span>Username</span>
-          <input id="username" maxlength="10" required />
-        </label>
-        <label class="field">
-          <span>Passwort</span>
-          <input id="password" type="password" minlength="6" required />
-        </label>
-        <div class="row">
-          <label class="check">
-            <input id="agreeRules" type="checkbox" required />
-            <span>Ich akzeptiere die Regeln.</span>
-          </label>
-          <button id="btnAuth" class="btn primary" type="submit">Login</button>
-        </div>
-        <div id="authMsg" class="note"></div>
-      </form>
-    </section>
-
-    <section id="appCard" class="card" hidden>
-      <div class="appShell">
-        <aside class="sidebar">
-          <div class="sideBlock">
-            <div class="sideTitle">Räume</div>
-            <div id="roomList" class="roomList"></div>
-          </div>
-        </aside>
-
-        <section class="chatPane">
-          <div class="chatHead">
-            <div>
-              <div id="roomTitle" class="chatTitle">—</div>
-              <div id="roomDesc" class="chatDesc"></div>
-            </div>
-          </div>
-
-          <div id="msgs" class="msgs"></div>
-
-          <form id="sendForm" class="sendBar">
-            <select id="msgType" class="select">
-              <option value="text">Text</option>
-              <option value="system">System</option>
-              <option value="bot">Bot</option>
-            </select>
-            <input id="msgInput" class="input" maxlength="100" />
-            <button class="btn primary" type="submit">Senden</button>
-          </form>
-        </section>
-      </div>
-    </section>
-  </main>
-
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="/script.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/script.js"></script>
 </body>
 </html>

@@ -1,15 +1,15 @@
-/* Chatly client script – FINAL FIXED
-   Fixes:
-   - DOMContentLoaded guard
-   - data-mode fallback
-   - REST send + Socket receive
+/* Chatly script.js – ADMIN READY (FINAL)
+   Compatible with:
+   - index_final_admin.html
+   - server_final.js
+   - Supabase admin schema
 */
 
 (() => {
   'use strict';
 
+  /* ---------- helpers ---------- */
   const $ = (s, r = document) => r.querySelector(s);
-
   const esc = (v) =>
     String(v ?? '')
       .replaceAll('&', '&amp;')
@@ -31,10 +31,10 @@
   }
 
   function show(el, on) {
-    if (!el) return;
-    el.hidden = !on;
+    if (el) el.hidden = !on;
   }
 
+  /* ---------- state ---------- */
   const state = {
     me: null,
     rooms: [],
@@ -44,33 +44,7 @@
 
   let el = {};
 
-  async function setMe(me) {
-    state.me = me;
-    const loggedIn = !!me;
-
-    show(el.authCard, !loggedIn);
-    show(el.appCard, loggedIn);
-    show(el.btnLogout, loggedIn);
-    show(el.btnAdmin, loggedIn && me?.role === 'admin');
-
-    if (!loggedIn) {
-      disconnectSocket();
-      return;
-    }
-
-    await loadRooms();
-    connectSocket();
-  }
-
-  async function boot() {
-    try {
-      const data = await fetchJSON('/api/auth/me');
-      await setMe(data.user);
-    } catch {
-      await setMe(null);
-    }
-  }
-
+  /* ---------- auth ---------- */
   function setAuthMode(mode) {
     el.tabLogin.classList.toggle('active', mode === 'login');
     el.tabRegister.classList.toggle('active', mode === 'register');
@@ -102,6 +76,36 @@
     }
   }
 
+  async function setMe(me) {
+    state.me = me;
+    const loggedIn = !!me;
+
+    show(el.authCard, !loggedIn);
+    show(el.appCard, loggedIn);
+    show(el.btnLogout, loggedIn);
+    show(el.btnAdmin, loggedIn && me?.role === 'admin');
+
+    el.mePill.textContent = loggedIn ? me.username : 'nicht angemeldet';
+
+    if (!loggedIn) {
+      disconnectSocket();
+      return;
+    }
+
+    await loadRooms();
+    connectSocket();
+  }
+
+  async function boot() {
+    try {
+      const data = await fetchJSON('/api/auth/me');
+      await setMe(data.user);
+    } catch {
+      await setMe(null);
+    }
+  }
+
+  /* ---------- rooms ---------- */
   async function loadRooms() {
     const data = await fetchJSON('/api/rooms/list');
     state.rooms = data.rooms || [];
@@ -130,6 +134,7 @@
     joinSocketRoom(room.id);
   }
 
+  /* ---------- messages ---------- */
   function addMsg(m) {
     const d = document.createElement('div');
     d.className = 'msg';
@@ -137,8 +142,11 @@
       ? '<em class="muted">gelöscht</em>'
       : esc(m.content);
 
-    d.innerHTML = `<div class="msgHead"><span>${esc(m.author_name || 'System')}</span></div>
-                   <div class="msgBody">${body}</div>`;
+    d.innerHTML = `<div class="msgHead">
+        <span>${esc(m.author_name || 'System')}</span>
+      </div>
+      <div class="msgBody">${body}</div>`;
+
     el.msgs.appendChild(d);
     el.msgs.scrollTop = el.msgs.scrollHeight;
   }
@@ -160,6 +168,7 @@
     });
   }
 
+  /* ---------- socket ---------- */
   function connectSocket() {
     if (state.socket || !window.io) return;
     state.socket = io({ withCredentials: true });
@@ -177,6 +186,28 @@
     state.socket?.emit('room:join', { room_id: id });
   }
 
+  /* ---------- admin ---------- */
+  function openAdmin() {
+    show(el.adminOverlay, true);
+  }
+
+  function closeAdmin() {
+    show(el.adminOverlay, false);
+  }
+
+  async function adminAction(kind) {
+    const username = el.adminUserSearch.value.trim();
+    if (!username) return alert('Username fehlt');
+
+    await fetchJSON(`/api/admin/${kind}`, {
+      method: 'POST',
+      body: JSON.stringify({ username })
+    });
+
+    alert(`${kind} ausgeführt`);
+  }
+
+  /* ---------- DOM ---------- */
   document.addEventListener('DOMContentLoaded', () => {
     el = {
       authCard: $('#authCard'),
@@ -189,25 +220,46 @@
       username: $('#username'),
       password: $('#password'),
       agreeRules: $('#agreeRules'),
+
+      mePill: $('#mePill'),
       btnLogout: $('#btnLogout'),
       btnAdmin: $('#btnAdmin'),
+
       roomList: $('#roomList'),
       roomTitle: $('#roomTitle'),
       roomDesc: $('#roomDesc'),
       msgs: $('#msgs'),
+
       sendForm: $('#sendForm'),
       msgInput: $('#msgInput'),
-      msgType: $('#msgType')
+      msgType: $('#msgType'),
+
+      adminOverlay: $('#adminOverlay'),
+      adminUserSearch: $('#adminUserSearch'),
+      btnAdminBan: $('#btnAdminBan'),
+      btnAdminMute: $('#btnAdminMute'),
+      btnAdminTimeout: $('#btnAdminTimeout'),
+      btnAdminClose: $('#btnAdminClose')
     };
 
+    /* auth */
     el.tabLogin.onclick = () => setAuthMode('login');
     el.tabRegister.onclick = () => setAuthMode('register');
     el.authForm.onsubmit = e => { e.preventDefault(); doAuth(); };
-    el.sendForm.onsubmit = e => { e.preventDefault(); sendMessage(); };
     el.btnLogout.onclick = async () => {
       await fetchJSON('/api/auth/logout', { method: 'POST' });
       setMe(null);
     };
+
+    /* chat */
+    el.sendForm.onsubmit = e => { e.preventDefault(); sendMessage(); };
+
+    /* admin */
+    el.btnAdmin.onclick = openAdmin;
+    el.btnAdminClose.onclick = closeAdmin;
+    el.btnAdminBan.onclick = () => adminAction('ban');
+    el.btnAdminMute.onclick = () => adminAction('mute');
+    el.btnAdminTimeout.onclick = () => adminAction('timeout');
 
     setAuthMode('login');
     boot();
