@@ -1,5 +1,5 @@
-// Chatly server.js – ADMIN API FINAL
-// Compatible with: script_admin_final.js, Supabase schema, Render env
+// Chatly server.js – FINAL FIXED (Render + Supabase + Admin API)
+// Node >=18, ESM
 
 import express from 'express';
 import http from 'http';
@@ -10,6 +10,9 @@ import { Server } from 'socket.io';
 
 const { Pool } = pg;
 
+/* =========================
+   App & Server
+========================= */
 const app = express();
 app.set('trust proxy', process.env.TRUST_PROXY === '1');
 
@@ -18,16 +21,25 @@ const io = new Server(server, {
   cors: { origin: true, credentials: true }
 });
 
-/* ---------- DB ---------- */
+/* =========================
+   Database (Supabase)
+========================= */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
-  max: 5
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000
 });
 
-const q = async (text, params = []) => (await pool.query(text, params)).rows;
+async function q(text, params = []) {
+  const { rows } = await pool.query(text, params);
+  return rows;
+}
 
-/* ---------- middleware ---------- */
+/* =========================
+   Middleware
+========================= */
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -44,9 +56,13 @@ app.use(session({
   }
 }));
 
-/* ---------- guards ---------- */
+/* =========================
+   Guards
+========================= */
 async function requireLogin(req, res, next) {
-  if (!req.session.user) return res.status(401).json({ error: 'not logged in' });
+  if (!req.session.user) {
+    return res.status(401).json({ error: 'not logged in' });
+  }
 
   const [u] = await q(
     'SELECT banned_until FROM users WHERE id=$1',
@@ -67,24 +83,24 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-/* ---------- auth ---------- */
-app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body;
-  const [user] = await q('SELECT * FROM users WHERE username=$1', [username]);
-  if (!user) return res.status(401).json({ error: 'invalid login' });
-
-  const ok = await bcrypt.compare(password, user.pass_hash);
-  if (!ok) return res.status(401).json({ error: 'invalid login' });
-
-  req.session.user = { id: user.id, username: user.username, role: user.role };
-  res.json({ user: req.session.user });
-});
-
+/* =========================
+   Auth
+========================= */
 app.post('/api/auth/register', async (req, res) => {
   const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'missing fields' });
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'missing fields' });
+  }
+  if (username.length > 10) {
+    return res.status(400).json({ error: 'username too long' });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'password too short' });
+  }
 
   const hash = await bcrypt.hash(password, 10);
+
   try {
     const [u] = await q(
       'INSERT INTO users (username, pass_hash) VALUES ($1,$2) RETURNING id, username, role',
@@ -97,6 +113,19 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  const [user] = await q('SELECT * FROM users WHERE username=$1', [username]);
+
+  if (!user) return res.status(401).json({ error: 'invalid login' });
+
+  const ok = await bcrypt.compare(password, user.pass_hash);
+  if (!ok) return res.status(401).json({ error: 'invalid login' });
+
+  req.session.user = { id: user.id, username: user.username, role: user.role };
+  res.json({ user: req.session.user });
+});
+
 app.post('/api/auth/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
@@ -106,15 +135,20 @@ app.get('/api/auth/me', (req, res) => {
   res.json({ user: req.session.user });
 });
 
-/* ---------- rooms ---------- */
+/* =========================
+   Rooms
+========================= */
 app.get('/api/rooms/list', requireLogin, async (req, res) => {
-  const rows = req.session.user.role === 'admin'
+  const isAdmin = req.session.user.role === 'admin';
+  const rows = isAdmin
     ? await q('SELECT * FROM rooms ORDER BY id')
     : await q("SELECT * FROM rooms WHERE admin_only=false AND visibility='public' ORDER BY id");
   res.json({ rooms: rows });
 });
 
-/* ---------- messages ---------- */
+/* =========================
+   Messages
+========================= */
 app.get('/api/messages/history', requireLogin, async (req, res) => {
   const rows = await q(
     `SELECT m.*, u.username AS author_name
@@ -128,14 +162,17 @@ app.get('/api/messages/history', requireLogin, async (req, res) => {
 });
 
 app.post('/api/messages/send', requireLogin, async (req, res) => {
-  const { room_id, content, type } = req.body;
-  if (!content || content.length > 100)
+  const { room_id, content, type = 'text' } = req.body;
+
+  if (!content || content.length > 100) {
     return res.status(400).json({ error: 'invalid message' });
+  }
 
   const [u] = await q(
     'SELECT muted_until FROM users WHERE id=$1',
     [req.session.user.id]
   );
+
   if (u?.muted_until && new Date(u.muted_until) > new Date()) {
     return res.status(403).json({ error: 'muted' });
   }
@@ -153,14 +190,18 @@ app.post('/api/messages/send', requireLogin, async (req, res) => {
   res.json({ message: msg });
 });
 
-/* ---------- ADMIN API ---------- */
+/* =========================
+   Admin API
+========================= */
 app.post('/api/admin/ban', requireLogin, requireAdmin, async (req, res) => {
   const { username } = req.body;
   const [u] = await q('SELECT id FROM users WHERE username=$1', [username]);
   if (!u) return res.status(404).json({ error: 'user not found' });
 
   await q(
-    'UPDATE users SET banned_until=now()+interval '7 days' WHERE id=$1',
+    `UPDATE users
+     SET banned_until = now() + interval '7 days'
+     WHERE id = $1`,
     [u.id]
   );
 
@@ -179,7 +220,9 @@ app.post('/api/admin/mute', requireLogin, requireAdmin, async (req, res) => {
   if (!u) return res.status(404).json({ error: 'user not found' });
 
   await q(
-    'UPDATE users SET muted_until=now()+interval '30 minutes' WHERE id=$1',
+    `UPDATE users
+     SET muted_until = now() + interval '30 minutes'
+     WHERE id = $1`,
     [u.id]
   );
 
@@ -198,7 +241,9 @@ app.post('/api/admin/timeout', requireLogin, requireAdmin, async (req, res) => {
   if (!u) return res.status(404).json({ error: 'user not found' });
 
   await q(
-    'UPDATE users SET timeout_until=now()+interval '10 minutes' WHERE id=$1',
+    `UPDATE users
+     SET timeout_until = now() + interval '10 minutes'
+     WHERE id = $1`,
     [u.id]
   );
 
@@ -211,14 +256,18 @@ app.post('/api/admin/timeout', requireLogin, requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ---------- socket ---------- */
+/* =========================
+   Socket.IO
+========================= */
 io.on('connection', socket => {
   socket.on('room:join', ({ room_id }) => {
     socket.join('room:' + room_id);
   });
 });
 
-/* ---------- start ---------- */
+/* =========================
+   Start
+========================= */
 const PORT = Number(process.env.PORT) || 3000;
 server.listen(PORT, () => {
   console.log('Chatly running on port', PORT);
