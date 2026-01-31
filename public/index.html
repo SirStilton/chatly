@@ -2,25 +2,21 @@
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chatly</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div class="bg" aria-hidden="true"></div>
-
   <header class="topbar">
     <div class="brand">
-      <div class="dot" aria-hidden="true"></div>
-      <div class="brandText">
+      <div class="dot"></div>
+      <div>
         <div class="brandName">Chatly</div>
-        <div class="brandTag">grün • transparent • realtime</div>
+        <div class="brandTag">grün · transparent · realtime</div>
       </div>
     </div>
-
     <div class="topActions">
-      <span id="mePill" class="pill">inicht angemelldet</span>
-      <button id="btnMobileMenu" class="iconBtn">☰</button>
+      <span id="mePill" class="pill">nicht angemeldet</span>
       <button id="btnAdmin" class="btn ghost" hidden>Admin</button>
       <button id="btnLogout" class="btn" hidden>Logout</button>
     </div>
@@ -30,13 +26,13 @@
     <section id="authCard" class="card">
       <div class="cardHead">
         <div class="tabs">
-          <button class="tab active" id="tabLogin">Login</button>
-          <button class="tab" id="tabRegister">Registrieren</button>
+          <button id="tabLogin" class="tab active">Login</button>
+          <button id="tabRegister" class="tab">Registrieren</button>
         </div>
         <div class="muted small">Ohne E-Mail. Username max. 10 Zeichen.</div>
       </div>
 
-      <form id="authForm" class="grid2">
+      <form id="authForm" class="grid2" data-mode="login">
         <label class="field">
           <span>Username</span>
           <input id="username" maxlength="10" required />
@@ -45,27 +41,45 @@
           <span>Passwort</span>
           <input id="password" type="password" minlength="6" required />
         </label>
-
         <div class="row">
           <label class="check">
-            <input id="agreeRules" type="checkbox" />
+            <input id="agreeRules" type="checkbox" required />
             <span>Ich akzeptiere die Regeln.</span>
           </label>
           <button id="btnAuth" class="btn primary" type="submit">Login</button>
-         </div>
+        </div>
         <div id="authMsg" class="note"></div>
       </form>
     </section>
 
-    <section id="appCard" class="card" style="display:none">
+    <section id="appCard" class="card" hidden>
       <div class="appShell">
-        <aside id="sidebar" class="sidebar">
+        <aside class="sidebar">
           <div class="sideBlock">
             <div class="sideTitle">Räume</div>
+            <div id="roomList" class="roomList"></div>
           </div>
         </aside>
+
         <section class="chatPane">
+          <div class="chatHead">
+            <div>
+              <div id="roomTitle" class="chatTitle">—</div>
+              <div id="roomDesc" class="chatDesc"></div>
+            </div>
+          </div>
+
           <div id="msgs" class="msgs"></div>
+
+          <form id="sendForm" class="sendBar">
+            <select id="msgType" class="select">
+              <option value="text">Text</option>
+              <option value="system">System</option>
+              <option value="bot">Bot</option>
+            </select>
+            <input id="msgInput" class="input" maxlength="100" />
+            <button class="btn primary" type="submit">Senden</button>
+          </form>
         </section>
       </div>
     </section>
