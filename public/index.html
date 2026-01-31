@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="de">
 <head>
   <meta charset="utf-8" />
@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div class="bg"></div>
+  <div class="bg" aria-hidden="true"></div>
 
   <header class="topbar">
     <div class="brand">
@@ -19,32 +19,31 @@
     </div>
 
     <div class="topActions">
-      <span id="mePill" class="pill">nicht angemeldet</span>
-      <button id="btnMobileMenu" class="iconBtn" title="Menü" aria-label="Menü">☰</button>
-      <button id="btnAdmin" class="btn ghost" style="display:none">Admin</button>
-      <button id="btnLogout" class="btn" style="display:none">Logout</button>
+      <span id="mePill" class="pill">inicht angemelldet</span>
+      <button id="btnMobileMenu" class="iconBtn">☰</button>
+      <button id="btnAdmin" class="btn ghost" hidden>Admin</button>
+      <button id="btnLogout" class="btn" hidden>Logout</button>
     </div>
   </header>
 
   <main class="wrap">
-    <!-- AUTH -->
     <section id="authCard" class="card">
       <div class="cardHead">
         <div class="tabs">
           <button class="tab active" id="tabLogin">Login</button>
           <button class="tab" id="tabRegister">Registrieren</button>
         </div>
-        <div class="muted small">Ohne E‑Mail. Username max. 10 Zeichen.</div>
+        <div class="muted small">Ohne E-Mail. Username max. 10 Zeichen.</div>
       </div>
 
-      <form id="authForm" class="grid2" autocomplete="on">
+      <form id="authForm" class="grid2">
         <label class="field">
           <span>Username</span>
-          <input id="username" maxlength="10" placeholder="z.B. Tom123" required />
+          <input id="username" maxlength="10" required />
         </label>
         <label class="field">
           <span>Passwort</span>
-          <input id="password" type="password" minlength="6" placeholder="mind. 6 Zeichen" required />
+          <input id="password" type="password" minlength="6" required />
         </label>
 
         <div class="row">
@@ -53,272 +52,24 @@
             <span>Ich akzeptiere die Regeln.</span>
           </label>
           <button id="btnAuth" class="btn primary" type="submit">Login</button>
-        </div>
-
-        <div id="authMsg" class="note" role="status" aria-live="polite"></div>
+         </div>
+        <div id="authMsg" class="note"></div>
       </form>
     </section>
 
-    <!-- APP -->
     <section id="appCard" class="card" style="display:none">
       <div class="appShell">
         <aside id="sidebar" class="sidebar">
           <div class="sideBlock">
             <div class="sideTitle">Räume</div>
-            <div class="sideSub">Öffentliche Räume sind gelistet. Private über Code/Link.</div>
-          </div>
-
-          <div class="sideBlock">
-            <div id="roomList" class="roomList"></div>
-          </div>
-
-          <div class="sideBlock">
-            <button id="btnCreateRoom" class="btn small wide">+ Raum erstellen</button>
-            <button id="btnJoinRoom" class="btn ghost small wide">Beitreten (Code/Link)</button>
-          </div>
-
-          <div class="sideBlock">
-            <div class="sideTitle">Trending</div>
-            <div class="sideSub">Top‑Räume nach Aktivität (letzte 10)</div>
-            <div id="trendingList" class="roomList compact"></div>
-          </div>
-
-          <div class="sideBlock">
-            <div class="sideTitle">Profil</div>
-            <button id="btnProfile" class="btn ghost small wide">Profil öffnen</button>
           </div>
         </aside>
-
         <section class="chatPane">
-          <div class="chatHead">
-            <div>
-              <div id="roomTitle" class="chatTitle">—</div>
-              <div id="roomDesc" class="chatDesc">Wähle links einen Raum.</div>
-            </div>
-            <div class="chatHeadActions">
-              <button id="btnLeaveRoom" class="btn ghost small">Verlassen</button>
-            </div>
-          </div>
-
-          <div id="msgs" class="msgs" aria-live="polite"></div>
-
-          <form id="sendForm" class="sendBar">
-            <select id="msgType" class="select" title="Typ">
-              <option value="text">Text</option>
-              <option value="system">System</option>
-              <option value="bot">Bot</option>
-            </select>
-            <input id="msgInput" maxlength="100" class="input" placeholder="Nachricht (max. 100 Zeichen)..." autocomplete="off" />
-            <button class="btn primary" type="submit">Senden</button>
-          </form>
-
-          <div class="muted tiny">Tipp: Du kannst deine eigenen Nachrichten löschen.</div>
+          <div id="msgs" class="msgs"></div>
         </section>
       </div>
     </section>
   </main>
-
-  <!-- CREATE ROOM OVERLAY -->
-  <div id="createRoomOverlay" class="overlay" style="display:none">
-    <div class="modal">
-      <div class="modalHead">
-        <div>
-          <div class="modalTitle">Raum erstellen</div>
-          <div class="muted small">Öffentlich gelistet oder privat per Code/Link.</div>
-        </div>
-        <button class="iconBtn" data-close="createRoomOverlay" aria-label="Schließen">✕</button>
-      </div>
-
-      <form id="createRoomForm" class="stack">
-        <label class="field">
-          <span>Name</span>
-          <input id="crTitle" maxlength="40" placeholder="z.B. Gaming" required />
-        </label>
-        <label class="field">
-          <span>Beschreibung</span>
-          <input id="crDesc" maxlength="80" placeholder="Worum geht's?" />
-        </label>
-        <label class="field">
-          <span>Slug (optional)</span>
-          <input id="crSlug" maxlength="30" placeholder="z.B. gaming" />
-        </label>
-
-        <div class="row">
-          <label class="check">
-            <input id="crPrivate" type="checkbox" />
-            <span>Privat (Join‑Code)</span>
-          </label>
-
-          <label class="check" id="crAdminOnlyRow" style="display:none">
-            <input id="crAdminOnly" type="checkbox" />
-            <span>Admin‑Only</span>
-          </label>
-        </div>
-
-        <div id="crMsg" class="note"></div>
-        <div class="row end">
-          <button class="btn ghost" type="button" data-close="createRoomOverlay">Abbrechen</button>
-          <button class="btn primary" type="submit">Erstellen</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- JOIN ROOM OVERLAY -->
-  <div id="joinRoomOverlay" class="overlay" style="display:none">
-    <div class="modal">
-      <div class="modalHead">
-        <div>
-          <div class="modalTitle">Privatem Raum beitreten</div>
-          <div class="muted small">Code oder Link‑Slug.</div>
-        </div>
-        <button class="iconBtn" data-close="joinRoomOverlay" aria-label="Schließen">✕</button>
-      </div>
-
-      <form id="joinRoomForm" class="stack">
-        <label class="field">
-          <span>Join‑Code oder Slug</span>
-          <input id="jrCode" maxlength="50" placeholder="z.B. ABCD-1234 oder my-room" required />
-        </label>
-
-        <div id="jrMsg" class="note"></div>
-        <div class="row end">
-          <button class="btn ghost" type="button" data-close="joinRoomOverlay">Abbrechen</button>
-          <button class="btn primary" type="submit">Beitreten</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- PROFILE OVERLAY -->
-  <div id="profileOverlay" class="overlay" style="display:none">
-    <div class="modal wide">
-      <div class="modalHead">
-        <div>
-          <div class="modalTitle">Profil</div>
-          <div class="muted small">Bio, Name ändern, Passwort ändern, Konto löschen.</div>
-        </div>
-        <button class="iconBtn" data-close="profileOverlay" aria-label="Schließen">✕</button>
-      </div>
-
-      <div class="cols">
-        <div class="stack">
-          <div class="sideTitle">Dein Profil</div>
-          <label class="field">
-            <span>Anzeigename (Username)</span>
-            <input id="pfUsername" maxlength="10" />
-          </label>
-          <label class="field">
-            <span>Bio</span>
-            <textarea id="pfBio" maxlength="180" rows="4" placeholder="Kurz über dich..."></textarea>
-          </label>
-          <label class="field">
-            <span>Avatar URL (optional)</span>
-            <input id="pfAvatar" placeholder="https://..." />
-          </label>
-          <div id="pfMsg" class="note"></div>
-          <div class="row end">
-            <button id="btnSaveProfile" class="btn primary" type="button">Speichern</button>
-          </div>
-        </div>
-
-        <div class="stack">
-          <div class="sideTitle">Passwort ändern</div>
-          <label class="field">
-            <span>Altes Passwort</span>
-            <input id="pwOld" type="password" />
-          </label>
-          <label class="field">
-            <span>Neues Passwort</span>
-            <input id="pwNew" type="password" minlength="6" />
-          </label>
-          <div id="pwMsg" class="note"></div>
-          <div class="row end">
-            <button id="btnChangePw" class="btn" type="button">Ändern</button>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="sideTitle danger">Konto löschen</div>
-          <div class="muted small">Löscht dein Profil. Nachrichten bleiben (als gelöscht markiert).</div>
-          <div id="delMsg" class="note"></div>
-          <div class="row end">
-            <button id="btnDeleteMe" class="btn danger" type="button">Konto löschen</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ADMIN OVERLAY -->
-  <div id="adminOverlay" class="overlay" style="display:none">
-    <div class="modal wide">
-      <div class="modalHead">
-        <div>
-          <div class="modalTitle">Admin Panel</div>
-          <div class="muted small">Moderation, Räume, Logs, Bots.</div>
-        </div>
-        <button class="iconBtn" data-close="adminOverlay" aria-label="Schließen">✕</button>
-      </div>
-
-      <div class="tabsBar">
-        <button class="tab2 active" data-admtab="users">Users</button>
-        <button class="tab2" data-admtab="rooms">Räume</button>
-        <button class="tab2" data-admtab="logs">Logs</button>
-        <button class="tab2" data-admtab="bots">Bots</button>
-        <button class="tab2" data-admtab="system">System</button>
-      </div>
-
-      <div id="admUsers" class="admTab">
-        <div class="row between">
-          <div class="sideTitle">User verwalten</div>
-          <input id="admUserSearch" class="input small" placeholder="suchen..." />
-        </div>
-        <div id="admUserList" class="table"></div>
-      </div>
-
-      <div id="admRooms" class="admTab" style="display:none">
-        <div class="row between">
-          <div class="sideTitle">Räume verwalten</div>
-          <button id="admRefreshRooms" class="btn small">Aktualisieren</button>
-        </div>
-        <div id="admRoomList" class="table"></div>
-      </div>
-
-      <div id="admLogs" class="admTab" style="display:none">
-        <div class="row between">
-          <div class="sideTitle">Moderation Logs</div>
-          <button id="admRefreshLogs" class="btn small">Aktualisieren</button>
-        </div>
-        <div id="admLogList" class="table"></div>
-      </div>
-
-      <div id="admBots" class="admTab" style="display:none">
-        <div class="row between">
-          <div class="sideTitle">Bots (basic)</div>
-          <button id="admRefreshBots" class="btn small">Aktualisieren</button>
-        </div>
-        <div id="admBotList" class="table"></div>
-      </div>
-
-      <div id="admSystem" class="admTab" style="display:none">
-        <div class="sideTitle">System Nachricht</div>
-        <div class="muted small">Wird als <b>system</b> in den aktuellen Raum gepostet.</div>
-        <div class="row">
-          <input id="admSystemText" class="input" maxlength="100" placeholder="System-Text (max. 100)..." />
-          <button id="admSendSystem" class="btn primary">Senden</button>
-        </div>
-        <div class="divider"></div>
-        <div class="sideTitle">HTML Script Sender (Test)</div>
-        <div class="muted small">Nur für Admin‑Testzwecke (wird im Chat als „bot“ gepostet).</div>
-        <div class="row">
-          <input id="admHtmlText" class="input" maxlength="100" placeholder="Kurzer Text..." />
-          <button id="admSendHtml" class="btn">Senden</button>
-        </div>
-      </div>
-
-    </div>
-  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/script.js"></script>
